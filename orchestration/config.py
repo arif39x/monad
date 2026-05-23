@@ -60,6 +60,10 @@ class StateSettings(BaseModel):
     event_log_path: str
 
 
+class CompilerSettings(BaseModel):
+    zerolang_path: str = Field(default="zerolang")
+
+
 class MonadSettings(BaseModel):
     default_provider: str
     providers: dict[str, ProviderSettings]
@@ -69,6 +73,7 @@ class MonadSettings(BaseModel):
     telemetry: TelemetrySettings
     sandbox: SandboxSettings
     state: StateSettings
+    compiler: CompilerSettings = Field(default_factory=CompilerSettings)
 
     def provider(self, name: str | None = None) -> ProviderSettings:
         selected_name = name or self.default_provider

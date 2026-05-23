@@ -1,34 +1,44 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::symbols;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    block::Title, Block, BorderType, Borders, Cell, Chart, Dataset, Gauge, GraphType,
-    List, ListItem, ListState, Paragraph, Row, Table, TableState, Tabs, Wrap,
+    Block, Borders,
+    List, ListItem, Paragraph, Wrap,
 };
 use ratatui::Frame;
 use ratatui::{prelude::*, Terminal};
+use tokio::sync::mpsc;
+use tokio::io::{self, AsyncBufReadExt, BufReader};
+use serde::{Deserialize, Serialize};
 
-const AGENT_COLORS: &[(&str, Color)] = &[
-    ("claude", Color::Rgb(255, 140, 0)),
-    ("aider", Color::Cyan),
-    ("gemini", Color::Rgb(147, 112, 219)),
-    ("opencode", Color::Green),
-    ("codex", Color::Rgb(0, 200, 200)),
-    ("copilot", Color::Rgb(100, 200, 255)),
-    ("ollama", Color::Rgb(255, 200, 0)),
-];
-
-#[derive(Clone)]
-struct LogEntry {
-    timestamp: String,
-    text: String,
-    level: LogLevel,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TuiEvent {
+    AgentUpdate {
+        name: String,
+        status: String,
+        action: String,
+        tokens: u64,
+    },
+    Interaction {
+        text: String,
+        level: String,
+    },
+    AstUpdate {
+        skeleton: Vec<String>,
+    },
+    MetricsUpdate {
+        total_tokens: u64,
+        saved_tokens: u64,
+    },
+    Log {
+        text: String,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -37,39 +47,19 @@ enum LogLevel {
     Success,
     Warning,
     Error,
-    Security,
-    Permission,
 }
 
-impl LogLevel {
-    fn color(&self) -> Color {
-        match self {
-            LogLevel::Info => Color::Cyan,
-            LogLevel::Success => Color::Green,
-            LogLevel::Warning => Color::Yellow,
-            LogLevel::Error => Color::Red,
-            LogLevel::Security => Color::Rgb(255, 69, 0),
-            LogLevel::Permission => Color::Magenta,
-        }
-    }
-
-    fn icon(&self) -> &'static str {
-        match self {
-            LogLevel::Info => "[i]",
-            LogLevel::Success => "[✓]",
-            LogLevel::Warning => "[!]",
-            LogLevel::Error => "[✗]",
-            LogLevel::Security => "[⚠]",
-            LogLevel::Permission => "[?]",
-        }
-    }
+#[derive(Clone)]
+struct LogEntry {
+    timestamp: String,
+    text: String,
+    level: LogLevel,
 }
 
 #[derive(Clone)]
 struct AgentState {
     name: String,
     status: AgentStatus,
-    role: String,
     token_usage: u64,
     current_action: String,
 }
@@ -77,215 +67,147 @@ struct AgentState {
 #[derive(Clone, PartialEq)]
 enum AgentStatus {
     Active,
+    Idle,
     Waiting,
-    Failed,
     Reasoning,
     Reviewing,
-    Idle,
+    Failed,
 }
 
 impl AgentStatus {
-    fn color(&self) -> Color {
-        match self {
-            AgentStatus::Active => Color::Green,
-            AgentStatus::Waiting => Color::Yellow,
-            AgentStatus::Failed => Color::Red,
-            AgentStatus::Reasoning => Color::Cyan,
-            AgentStatus::Reviewing => Color::Magenta,
-            AgentStatus::Idle => Color::DarkGray,
+    fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "active" => AgentStatus::Active,
+            "waiting" => AgentStatus::Waiting,
+            "reasoning" => AgentStatus::Reasoning,
+            "reviewing" => AgentStatus::Reviewing,
+            "failed" => AgentStatus::Failed,
+            _ => AgentStatus::Idle,
         }
     }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            AgentStatus::Active => "ACTIVE",
-            AgentStatus::Waiting => "WAIT",
-            AgentStatus::Failed => "FAIL",
-            AgentStatus::Reasoning => "REASON",
-            AgentStatus::Reviewing => "REVIEW",
-            AgentStatus::Idle => "IDLE",
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PermissionRequest {
-    agent: String,
-    command: String,
-    risk_level: String,
-    description: Vec<String>,
 }
 
 struct App {
     agents: Vec<AgentState>,
     logs: VecDeque<LogEntry>,
-    events: VecDeque<LogEntry>,
-    sidebar_scroll: u16,
-    activity_scroll: u16,
-    event_scroll: u16,
+    interaction_stream: VecDeque<LogEntry>,
+    ast_context: Vec<String>,
+    input: String,
     selected_agent: usize,
-    show_permission: bool,
-    permission: Option<PermissionRequest>,
-    start_time: Instant,
-    session_id: String,
-    total_tasks: u32,
-    completed_tasks: u32,
     total_tokens: u64,
     saved_tokens: u64,
-    tab_index: usize,
     running: bool,
-    agent_sig: String,
-    plan_file: String,
+    pid: u32,
 }
 
 impl App {
     fn new() -> Self {
-        let mut app = App {
-            agents: Vec::new(),
-            logs: VecDeque::with_capacity(1000),
-            events: VecDeque::with_capacity(500),
-            sidebar_scroll: 0,
-            activity_scroll: 0,
-            event_scroll: 0,
+        App {
+            agents: Vec::with_capacity(8),
+            logs: VecDeque::with_capacity(50),
+            interaction_stream: VecDeque::with_capacity(200),
+            ast_context: Vec::with_capacity(16),
+            input: String::with_capacity(128),
             selected_agent: 0,
-            show_permission: false,
-            permission: None,
-            start_time: Instant::now(),
-            session_id: format!("ses_{}", uuid_v4()),
-            total_tasks: 0,
-            completed_tasks: 0,
             total_tokens: 0,
             saved_tokens: 0,
-            tab_index: 0,
             running: true,
-            agent_sig: String::new(),
-            plan_file: String::new(),
-        };
-        app.seed_demo_data();
-        app
+            pid: std::process::id(),
+        }
     }
 
-    fn seed_demo_data(&mut self) {
-        self.agents = vec![
-            AgentState {
-                name: "opencode".into(),
-                status: AgentStatus::Active,
-                role: "Frontend".into(),
-                token_usage: 1250,
-                current_action: "Generating React components...".into(),
-            },
-            AgentState {
-                name: "gemini".into(),
-                status: AgentStatus::Reasoning,
-                role: "Backend".into(),
-                token_usage: 3400,
-                current_action: "Designing API schema...".into(),
-            },
-            AgentState {
-                name: "codex".into(),
-                status: AgentStatus::Waiting,
-                role: "Debugger".into(),
-                token_usage: 800,
-                current_action: "Awaiting backend output...".into(),
-            },
-            AgentState {
-                name: "claude".into(),
-                status: AgentStatus::Idle,
-                role: "Reviewer".into(),
-                token_usage: 0,
-                current_action: "Standing by".into(),
-            },
-        ];
-
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:11".into(),
-            text: "opencode analyzing frontend requirements...".into(),
-            level: LogLevel::Info,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:18".into(),
-            text: "Dependency graph validated — 4 tasks ready".into(),
-            level: LogLevel::Success,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:30".into(),
-            text: "gemini generating backend scaffold...".into(),
-            level: LogLevel::Info,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:31".into(),
-            text: "opencode → src/App.jsx created (2.4 KB)".into(),
-            level: LogLevel::Success,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:34".into(),
-            text: "cargo test failed — 3 compiler errors".into(),
-            level: LogLevel::Error,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:35".into(),
-            text: "Surgical repair initiated by codex".into(),
-            level: LogLevel::Warning,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:40".into(),
-            text: "SECURITY: aider requesting git commit access".into(),
-            level: LogLevel::Security,
-        });
-        self.logs.push_back(LogEntry {
-            timestamp: "10:42:45".into(),
-            text: "PERMISSION: package install requested (express)".into(),
-            level: LogLevel::Permission,
-        });
-    }
-
-    fn elapsed_str(&self) -> String {
-        let d = self.start_time.elapsed();
-        format!("{:02}:{:02}:{:02}", d.as_secs() / 3600, (d.as_secs() / 60) % 60, d.as_secs() % 60)
-    }
-
-    fn agent_color(&self, name: &str) -> Color {
-        for (n, c) in AGENT_COLORS {
-            if name.contains(n) {
-                return *c;
+    fn handle_tui_event(&mut self, event: TuiEvent) {
+        match event {
+            TuiEvent::AgentUpdate { name, status, action, tokens } => {
+                let status_enum = AgentStatus::from_str(&status);
+                if let Some(agent) = self.agents.iter_mut().find(|a| a.name == name) {
+                    agent.status = status_enum;
+                    agent.current_action = action;
+                    agent.token_usage = tokens;
+                } else {
+                    self.agents.push(AgentState {
+                        name,
+                        status: status_enum,
+                        token_usage: tokens,
+                        current_action: action,
+                    });
+                }
+            }
+            TuiEvent::Interaction { text, level } => {
+                let log_level = match level.to_lowercase().as_str() {
+                    "success" => LogLevel::Success,
+                    "warning" => LogLevel::Warning,
+                    "error" => LogLevel::Error,
+                    _ => LogLevel::Info,
+                };
+                self.interaction_stream.push_back(LogEntry {
+                    timestamp: String::new(), // Don't store timestamps for interaction
+                    text,
+                    level: log_level,
+                });
+                if self.interaction_stream.len() > 200 {
+                    self.interaction_stream.pop_front();
+                }
+            }
+            TuiEvent::AstUpdate { skeleton } => {
+                self.ast_context = skeleton;
+            }
+            TuiEvent::MetricsUpdate { total_tokens, saved_tokens } => {
+                self.total_tokens = total_tokens;
+                self.saved_tokens = saved_tokens;
+            }
+            TuiEvent::Log { text } => {
+                self.logs.push_back(LogEntry {
+                    timestamp: String::new(),
+                    text,
+                    level: LogLevel::Info,
+                });
+                if self.logs.len() > 50 {
+                    self.logs.pop_front();
+                }
             }
         }
-        Color::Cyan
     }
 
-    fn handle_key(&mut self, key: KeyCode) {
+    fn handle_key(&mut self, key: KeyCode, modifiers: event::KeyModifiers) {
+        // Exit on 'q' or 'Ctrl+X'
+        if key == KeyCode::Char('q') || (key == KeyCode::Char('x') && modifiers.contains(event::KeyModifiers::CONTROL)) {
+            self.running = false;
+            return;
+        }
+
         match key {
-            KeyCode::Char('q') => self.running = false,
-            KeyCode::Char('p') => {}
-            KeyCode::Char('t') => self.tab_index = (self.tab_index + 1) % 3,
-            KeyCode::Char('y') => {
-                if self.show_permission {
-                    self.show_permission = false;
-                    self.logs.push_back(LogEntry {
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Enter => {
+                if !self.input.is_empty() {
+                    // In a real functional TUI, we would emit this to stdout
+                    // so the parent process can handle it.
+                    println!("{}", serde_json::to_string(&serde_json::json!({
+                        "type": "user_input",
+                        "text": self.input,
+                        "target_agent": self.agents.get(self.selected_agent).map(|a| a.name.clone())
+                    })).unwrap());
+                    
+                    self.interaction_stream.push_back(LogEntry {
                         timestamp: chrono_now(),
-                        text: "Permission granted — executing command".into(),
-                        level: LogLevel::Success,
+                        text: format!("[You]: {}", self.input),
+                        level: LogLevel::Info,
                     });
+                    self.input.clear();
                 }
             }
-            KeyCode::Char('n') => {
-                if self.show_permission {
-                    self.show_permission = false;
-                    self.logs.push_back(LogEntry {
-                        timestamp: chrono_now(),
-                        text: "Permission denied — command blocked".into(),
-                        level: LogLevel::Security,
-                    });
-                }
+            KeyCode::Char(c) => {
+                self.input.push(c);
             }
-            KeyCode::Esc => self.show_permission = false,
             KeyCode::Up => {
                 if self.selected_agent > 0 {
                     self.selected_agent -= 1;
                 }
             }
             KeyCode::Down => {
-                if self.selected_agent < self.agents.len().saturating_sub(1) {
+                if !self.agents.is_empty() && self.selected_agent < self.agents.len() - 1 {
                     self.selected_agent += 1;
                 }
             }
@@ -304,44 +226,69 @@ fn chrono_now() -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
-fn uuid_v4() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    format!("{:016x}", d.as_nanos())
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Open /dev/tty for terminal I/O so stdout can be used for data
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")?;
+    
     terminal::enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    crossterm::execute!(stdout, EnterAlternateScreen)?;
+    crossterm::execute!(tty, EnterAlternateScreen)?;
 
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(tty);
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
+    let (tx, mut rx) = mpsc::channel::<TuiEvent>(100);
+
+    let tx_event = tx.clone();
+    tokio::spawn(async move {
+        let stdin = io::stdin();
+        let reader = BufReader::new(stdin);
+        let mut lines = reader.lines();
+
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Ok(event) = serde_json::from_str::<TuiEvent>(&line) {
+                let _ = tx_event.send(event).await;
+            } else {
+                let _ = tx_event.send(TuiEvent::Log { text: line }).await;
+            }
+        }
+    });
+
     let tick_rate = Duration::from_millis(50);
+    let mut last_tick = Instant::now();
 
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
 
-        if event::poll(tick_rate)? {
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or_else(|| Duration::from_secs(0));
+
+        if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    app.handle_key(key.code);
+                    app.handle_key(key.code, key.modifiers);
                     if !app.running {
                         break;
                     }
                 }
             }
-            if let Event::Mouse(m) = event::read()? {
-                if let MouseEventKind::ScrollDown = m.kind {
-                    app.activity_scroll = app.activity_scroll.saturating_add(1);
-                }
-                if let MouseEventKind::ScrollUp = m.kind {
-                    app.activity_scroll = app.activity_scroll.saturating_sub(1);
-                }
-            }
-            if let Event::Resize(_, _) = event::read()? {}
+        }
+
+        while let Ok(event) = rx.try_recv() {
+            app.handle_tui_event(event);
+        }
+
+        if last_tick.elapsed() >= tick_rate {
+            last_tick = Instant::now();
+        }
+
+        if !app.running {
+            break;
         }
     }
 
@@ -351,427 +298,184 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn ui(frame: &mut Frame, app: &mut App) {
-    let area = frame.size();
+    let area = frame.area();
+    
+    // Responsive constraints: adapt to smaller terminals by reducing header/footer height
+    let header_height = if area.height > 20 { 3 } else { 1 };
+    let footer_height = if area.height > 15 { 3 } else { 1 };
+    let ast_height = if area.height > 25 { 7 } else { 0 };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7),
-            Constraint::Min(1),
-            Constraint::Length(10),
+            Constraint::Length(header_height),
+            Constraint::Min(5),
+            Constraint::Length(ast_height),
+            Constraint::Length(footer_height),
         ])
         .split(area);
 
     render_header(frame, app, chunks[0]);
-    render_main(frame, app, chunks[1]);
-    render_event_trace(frame, app, chunks[2]);
-
-    if app.show_permission {
-        render_permission_modal(frame, app, area);
+    render_middle(frame, app, chunks[1]);
+    if ast_height > 0 {
+        render_ast_window(frame, app, chunks[2]);
     }
+    render_footer(frame, app, chunks[3]);
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(32), Constraint::Min(1)])
-        .split(area);
+    let savings_pct = if app.total_tokens > 0 {
+        (app.saved_tokens * 100) / app.total_tokens
+    } else {
+        0
+    };
 
-    let logo = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let logo_inner = logo.inner(chunks[0]);
-    frame.render_widget(logo, chunks[0]);
+    let active_agent = app.agents.get(app.selected_agent).map(|a| a.name.as_str()).unwrap_or("None");
 
-    let logo_lines = vec![
-        Line::from(vec![
-            Span::styled("  ░░", Style::default().fg(Color::Cyan)),
-        ]),
-        Line::from(vec![
-            Span::styled(" ░░░░░░", Style::default().fg(Color::Cyan)),
-            Span::styled(" MONAD", Style::default().fg(Color::Rgb(255, 200, 0)).add_modifier(Modifier::BOLD)),
-            Span::styled(" v0.1", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::styled(" ░░░▒░░", Style::default().fg(Color::Cyan)),
-        ]),
-        Line::from(vec![
-            Span::styled("  ░░  ░░  ░░", Style::default().fg(Color::Cyan)),
-        ]),
-    ];
-    let logo_para = Paragraph::new(logo_lines).style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    frame.render_widget(logo_para, logo_inner);
+    let header_text = format!(
+        " Monad CLI v0.1 | Active: @{} | Token Savings: {}% ",
+        active_agent, savings_pct
+    );
+    
+    let bar_width = 10;
+    let filled = (savings_pct / 10).min(10) as usize;
+    let bar = format!("[{}{}]", "|".repeat(filled), "-".repeat(bar_width - filled));
 
-    let header = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let inner = header.inner(chunks[1]);
-    frame.render_widget(header, chunks[1]);
+    let header_line = Line::from(vec![
+        Span::styled(header_text, Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(bar, Style::default().fg(Color::Green)),
+        Span::raw(" | "),
+        Span::styled(format!("PID: {}", app.pid), Style::default().fg(Color::DarkGray)),
+    ]);
 
-    let meta_lines = vec![
-        Line::from(vec![
-            Span::styled(" Session:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&app.session_id[..16], Style::default().fg(Color::Green)),
-            Span::raw("  │  "),
-            Span::styled("Elapsed: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(app.elapsed_str(), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::styled(" Tasks:   ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{}/{}", app.completed_tasks, app.total_tasks),
-                Style::default().fg(Color::Cyan),
-            ),
-            Span::raw("  │  "),
-            Span::styled("Tokens: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}k", app.total_tokens / 1000), Style::default().fg(Color::Magenta)),
-            Span::raw("  │  "),
-            Span::styled("Saved: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}%", (app.saved_tokens * 100) / std::cmp::max(app.total_tokens, 1)), Style::default().fg(Color::Green)),
-        ]),
-        Line::from(vec![
-            Span::styled(" Plan:    ", Style::default().fg(Color::DarkGray)),
-            Span::styled("web-app-project.jsonl", Style::default().fg(Color::Rgb(100, 200, 255))),
-            Span::raw("  │  "),
-            Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("RUNNING", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-        ]),
-    ];
-    let meta_para = Paragraph::new(meta_lines).style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    frame.render_widget(meta_para, inner);
+    let block = Block::default()
+        .borders(if area.height > 1 { Borders::ALL } else { Borders::NONE })
+        .border_style(Style::default().fg(Color::White));
+    
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(header_line).alignment(Alignment::Left), inner);
 }
 
-fn render_main(frame: &mut Frame, app: &mut App, area: Rect) {
+fn render_middle(frame: &mut Frame, app: &mut App, area: Rect) {
+    let sidebar_width = if area.width > 100 { 30 } else { 25 };
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(32), Constraint::Min(1), Constraint::Length(36)])
+        .constraints([Constraint::Length(sidebar_width), Constraint::Min(10)])
         .split(area);
 
     render_sidebar(frame, app, chunks[0]);
-    render_activity_feed(frame, app, chunks[1]);
-    render_task_panel(frame, app, chunks[2]);
+    render_interaction_stream(frame, app, chunks[1]);
 }
 
 fn render_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(4)])
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
-    let block = Block::default()
-        .title(" Agents ")
-        .title_alignment(Alignment::Center)
+    // Agent Registry
+    let registry_block = Block::default()
+        .title(" AGENT REGISTRY ")
         .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let inner = block.inner(chunks[0]);
-    frame.render_widget(block, chunks[0]);
+        .border_style(Style::default().fg(Color::White));
+    let registry_inner = registry_block.inner(chunks[0]);
+    frame.render_widget(registry_block, chunks[0]);
 
-    let mut items: Vec<ListItem> = Vec::new();
-    for agent in &app.agents {
-        let color = app.agent_color(&agent.name);
-        let status_color = agent.status.color();
-        let arrow = if items.len() == app.selected_agent {
-            "▸ "
+    let mut agent_items = Vec::new();
+    for (i, agent) in app.agents.iter().enumerate() {
+        let check = if agent.status == AgentStatus::Active { "[✓]" } else { "[ ]" };
+        let style = if i == app.selected_agent {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
         } else {
-            "  "
+            match agent.status {
+                AgentStatus::Failed => Style::default().fg(Color::Red),
+                _ => Style::default().fg(Color::White),
+            }
+        };
+        agent_items.push(ListItem::new(format!(" {} @{}", check, agent.name)).style(style));
+    }
+    if agent_items.is_empty() {
+        agent_items.push(ListItem::new(" (No agents detected)").style(Style::default().fg(Color::DarkGray)));
+    }
+    frame.render_widget(List::new(agent_items), registry_inner);
+
+    // Session Logs
+    let logs_block = Block::default()
+        .title(" SESSION LOGS ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+    let logs_inner = logs_block.inner(chunks[1]);
+    frame.render_widget(logs_block, chunks[1]);
+
+    let log_items: Vec<ListItem> = app.logs.iter().rev().map(|l| {
+        ListItem::new(format!(" > {}", l.text)).style(Style::default().fg(Color::DarkGray))
+    }).collect();
+    frame.render_widget(List::new(log_items), logs_inner);
+}
+
+fn render_interaction_stream(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" INTERACTION STREAM ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::White));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines: Vec<Line> = app.interaction_stream.iter().map(|l| {
+        let color = match l.level {
+            LogLevel::Success => Color::Green,
+            LogLevel::Warning => Color::Yellow,
+            LogLevel::Error => Color::Red,
+            LogLevel::Info => {
+                if l.text.contains("[You]:") {
+                    Color::White
+                } else if l.text.contains("[ZeroLang]:") {
+                    Color::Cyan
+                } else {
+                    Color::DarkGray
+                }
+            }
         };
 
-        let line = vec![
-            Line::from(vec![
-                Span::styled(arrow, Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    format!(" {:12}", agent.name),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:6}", agent.status.as_str()),
-                    Style::default().fg(status_color).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::raw("    "),
-                Span::styled(&agent.current_action, Style::default().fg(Color::DarkGray)),
-            ]),
-            Line::from(vec![
-                Span::raw("    "),
-                Span::styled("role: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&agent.role, Style::default().fg(Color::Rgb(100, 200, 255))),
-                Span::raw("  tokens: "),
-                Span::styled(format!("{}", agent.token_usage), Style::default().fg(Color::Magenta)),
-            ]),
-        ];
+        Line::from(Span::styled(&l.text, Style::default().fg(color)))
+    }).collect();
 
-        items.push(ListItem::new(line).style(Style::default().bg(Color::Rgb(11, 15, 20))));
-    }
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }).scroll(( (app.interaction_stream.len() as u16).saturating_sub(inner.height), 0)), inner);
+}
 
-    let list = List::new(items).highlight_style(
-        Style::default()
-            .bg(Color::Rgb(20, 30, 40))
-            .add_modifier(Modifier::BOLD),
-    );
-    frame.render_widget(list, inner);
-
-    let bar_block = Block::default()
-        .title(" Progress ")
-        .title_alignment(Alignment::Center)
+fn render_ast_window(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" AST CONTEXT WINDOW (Live ZeroLang Skeleton View) ")
         .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Rgb(100, 200, 100)))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let bar_inner = bar_block.inner(chunks[1]);
-    frame.render_widget(bar_block, chunks[1]);
+        .border_style(Style::default().fg(Color::White));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let progress = if app.total_tasks > 0 {
-        app.completed_tasks as f64 / app.total_tasks as f64
+    let lines: Vec<Line> = app.ast_context.iter().map(|l| {
+        Line::from(Span::styled(l, Style::default().fg(Color::Cyan)))
+    }).collect();
+
+    if lines.is_empty() {
+        frame.render_widget(Paragraph::new(" (No AST context active)").style(Style::default().fg(Color::DarkGray)), inner);
     } else {
-        0.0
-    };
-    let gauge = Gauge::default()
-        .block(Block::default().title(" Workflow ").borders(Borders::NONE))
-        .gauge_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .bg(Color::Rgb(20, 30, 40))
-                .add_modifier(Modifier::BOLD),
-        )
-        .percent((progress * 100.0) as u16)
-        .label(format!("{:.0}%", progress * 100.0));
-    frame.render_widget(gauge, bar_inner);
-}
-
-fn render_activity_feed(frame: &mut Frame, app: &mut App, area: Rect) {
-    let block = Block::default()
-        .title(" Activity Feed ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let lines: Vec<Line> = app
-        .logs
-        .iter()
-        .rev()
-        .skip(app.activity_scroll as usize)
-        .take((inner.height as usize).saturating_sub(1))
-        .map(|entry| {
-            let color = entry.level.color();
-            Line::from(vec![
-                Span::styled(
-                    format!(" {} ", entry.timestamp),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(
-                    format!("{} ", entry.level.icon()),
-                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(&entry.text, Style::default().fg(Color::Rgb(200, 210, 220))),
-            ])
-        })
-        .collect();
-
-    let para = Paragraph::new(lines)
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)))
-        .scroll((0, 0));
-    frame.render_widget(para, inner);
-}
-
-fn render_task_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(12)])
-        .split(area);
-
-    let block = Block::default()
-        .title(" Current Task ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Cyan))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let inner = block.inner(chunks[0]);
-    frame.render_widget(block, chunks[0]);
-
-    if let Some(agent) = app.agents.get(app.selected_agent) {
-        let color = app.agent_color(&agent.name);
-        let lines = vec![
-            Line::from(vec![
-                Span::styled(" Active Agent: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&agent.name, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled(
-                    agent.status.as_str(),
-                    Style::default().fg(agent.status.color()).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled(" Role:         ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&agent.role, Style::default().fg(Color::Rgb(100, 200, 255))),
-            ]),
-            Line::from(vec![
-                Span::styled(" Action:       ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&agent.current_action, Style::default().fg(Color::White)),
-            ]),
-            Line::from(vec![
-                Span::styled(" Tokens:       ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{}", agent.token_usage), Style::default().fg(Color::Magenta)),
-            ]),
-        ];
-        let para = Paragraph::new(lines).style(Style::default().bg(Color::Rgb(11, 15, 20)));
-        frame.render_widget(para, inner);
+        frame.render_widget(Paragraph::new(lines), inner);
     }
-
-    let files = Block::default()
-        .title(" Files Changed ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Rgb(100, 200, 100)))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    let files_inner = files.inner(chunks[1]);
-    frame.render_widget(files, chunks[1]);
-
-    let file_lines = vec![
-        Line::from(vec![
-            Span::styled(" src/App.jsx", Style::default().fg(Color::Green)),
-            Span::raw("         "),
-            Span::styled("+24 / -3", Style::default().fg(Color::Rgb(100, 200, 100))),
-        ]),
-        Line::from(vec![
-            Span::styled(" backend/main.py", Style::default().fg(Color::Cyan)),
-            Span::raw("      "),
-            Span::styled("+56 / -0", Style::default().fg(Color::Rgb(100, 200, 100))),
-        ]),
-        Line::from(vec![
-            Span::styled(" backend/database.py", Style::default().fg(Color::Magenta)),
-            Span::raw("   "),
-            Span::styled("+42 / -0", Style::default().fg(Color::Rgb(100, 200, 100))),
-        ]),
-    ];
-    let files_para = Paragraph::new(file_lines).style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    frame.render_widget(files_para, files_inner);
 }
 
-fn render_event_trace(frame: &mut Frame, app: &App, area: Rect) {
+fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let active_agent = app.agents.get(app.selected_agent).map(|a| a.name.as_str()).unwrap_or("aider");
+    let input_text = if area.height > 1 {
+        format!("> @{} {}_ ", active_agent, app.input)
+    } else {
+        format!("@{} > {} ", active_agent, app.input)
+    };
+
     let block = Block::default()
-        .title(" Event Trace ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(Style::default().fg(Color::Rgb(100, 200, 200)))
-        .style(Style::default().bg(Color::Rgb(11, 15, 20)));
+        .borders(if area.height > 1 { Borders::ALL } else { Borders::NONE })
+        .border_style(Style::default().fg(Color::White));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines: Vec<Line> = app
-        .logs
-        .iter()
-        .rev()
-        .skip(app.event_scroll as usize)
-        .take((inner.height as usize).saturating_sub(1))
-        .map(|entry| {
-            let color = entry.level.color();
-            Line::from(vec![
-                Span::styled(
-                    format!("[{}] ", entry.timestamp),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(
-                    format!("{} ", entry.level.icon()),
-                    Style::default().fg(color),
-                ),
-                Span::styled(&entry.text, Style::default().fg(Color::Rgb(160, 170, 180))),
-            ])
-        })
-        .collect();
-
-    let para = Paragraph::new(lines).style(Style::default().bg(Color::Rgb(11, 15, 20)));
-    frame.render_widget(para, inner);
-
-    let shortcuts = format!(
-        " [q] quit  [↑↓] nav  [t] tabs  [y/n] approve/deny  [esc] close modal"
-    );
-    let shortcut_para = Paragraph::new(Span::styled(
-        &shortcuts,
-        Style::default().fg(Color::DarkGray),
-    ))
-    .style(Style::default().bg(Color::Rgb(11, 15, 20)))
-    .alignment(Alignment::Center);
-    frame.render_widget(
-        shortcut_para,
-        Rect::new(area.x, area.y + area.height - 1, area.width, 1),
-    );
-}
-
-fn render_permission_modal(frame: &mut Frame, app: &App, area: Rect) {
-    let modal_width = 56;
-    let modal_height = 14;
-    let x = (area.width.saturating_sub(modal_width)) / 2;
-    let y = (area.height.saturating_sub(modal_height)) / 2;
-    let modal_area = Rect::new(x, y, modal_width, modal_height);
-
-    let block = Block::default()
-        .title(" Permission Required ")
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Thick)
-        .border_style(
-            Style::default()
-                .fg(Color::Rgb(255, 69, 0))
-                .add_modifier(Modifier::BOLD),
-        )
-        .style(Style::default().bg(Color::Rgb(15, 10, 10)));
-    let inner = block.inner(modal_area);
-    frame.render_widget(block, modal_area);
-
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(" Agent:  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("aider", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(Span::raw("")),
-        Line::from(vec![
-            Span::styled(" Command:", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::styled(
-                " git commit -m \"feat: add auth flow\"",
-                Style::default().fg(Color::Yellow),
-            ),
-        ]),
-        Line::from(Span::raw("")),
-        Line::from(vec![
-            Span::styled(" Risk Level: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("MEDIUM", Style::default().fg(Color::Rgb(255, 165, 0)).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(Span::raw("")),
-        Line::from(vec![
-            Span::styled(" This action will:", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(vec![
-            Span::styled("   • modify repository state", Style::default().fg(Color::Rgb(200, 210, 220))),
-        ]),
-        Line::from(vec![
-            Span::styled("   • create a commit", Style::default().fg(Color::Rgb(200, 210, 220))),
-        ]),
-        Line::from(Span::raw("")),
-        Line::from(vec![
-            Span::styled(" [", Style::default().fg(Color::DarkGray)),
-            Span::styled("Y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled("] Allow Once  [", Style::default().fg(Color::DarkGray)),
-            Span::styled("A", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled("] Always Allow  [", Style::default().fg(Color::DarkGray)),
-            Span::styled("N", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::styled("] Deny", Style::default().fg(Color::DarkGray)),
-        ]),
-    ];
-    let para = Paragraph::new(lines).style(Style::default().bg(Color::Rgb(15, 10, 10)));
-    frame.render_widget(para, inner);
+    frame.render_widget(Paragraph::new(input_text).style(Style::default().fg(Color::White)), inner);
 }

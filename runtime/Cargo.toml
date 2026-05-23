@@ -22,7 +22,7 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
-tokio = { version = "1.39", features = ["process", "io-util", "macros", "rt-multi-thread", "time", "sync"] }
+tokio = { version = "1.39", features = ["process", "io-util", "macros", "rt-multi-thread", "time", "sync", "io-std"] }
 tracing = "0.1"
 ratatui = { version = "0.29", features = ["all-widgets"], optional = true }
 crossterm = { version = "0.28", optional = true }
@@ -33,3 +33,10 @@ chrono = { version = "0.4", optional = true }
 default = ["runtime"]
 runtime = []
 tui = ["ratatui", "crossterm", "futures", "chrono"]
+
+[profile.release]
+opt-level = "z"      # Optimize for size
+lto = true           # Enable Link Time Optimization (LTO)
+codegen-units = 1    # Reduce parallel code generation units to increase optimization
+panic = "abort"      # Remove panic string formatting/backtrace code
+strip = true         # Automatically strip symbols from the binary

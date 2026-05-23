@@ -79,13 +79,33 @@ async def run_task(
     signature: tuple[str, ...],
     *,
     dry_run: bool = False,
+    zerolang_path: str = "zerolang",
 ) -> TaskResult:
+    from orchestration.agents import AgentRegistry, Agent, AgentSettings, AgentRole
+
     full_prompt = task.prompt
     if task.context:
         full_prompt = f"{task.context}\n\n{task.prompt}"
+
+    # Zero-Context Integration
     if task.files:
-        file_refs = ", ".join(task.files)
-        full_prompt = f"{full_prompt}\n\nRelevant files: {file_refs}"
+        registry = AgentRegistry()
+        agent_obj = registry.get_agent(task.agent)
+        if not agent_obj:
+            # On-the-fly registration for detected agents
+            agent_obj = Agent(
+                AgentSettings(name=task.agent, role=AgentRole.PLANNER, provider="default"),
+                zerolang_path=zerolang_path
+            )
+            registry.register(agent_obj)
+
+        file_paths = [working_dir / f for f in task.files if (working_dir / f).exists()]
+        if file_paths:
+            ast_context = await agent_obj.prepare_context(file_paths)
+            full_prompt = f"{full_prompt}\n\nCode Context (AST):\n{ast_context}"
+        else:
+            file_refs = ", ".join(task.files)
+            full_prompt = f"{full_prompt}\n\nRelevant files (not found): {file_refs}"
 
     token_estimate = _estimate_tokens(full_prompt)
     command = _build_command(task.agent, full_prompt, signature)
@@ -213,6 +233,7 @@ async def execute_plan(
     agent_signatures: dict[str, tuple[str, ...]],
     *,
     dry_run: bool = False,
+    zerolang_path: str = "zerolang",
 ) -> ProjectPlan:
     layers = _group_by_depth(plan.tasks)
     completed: dict[str, TaskResult] = {}
@@ -232,7 +253,13 @@ async def execute_plan(
 
             sig = agent_signatures.get(task.agent, ("{prompt}",))
             return await run_task(
-                task, working_dir, runtime_client, sandbox_policy, sig, dry_run=dry_run,
+                task,
+                working_dir,
+                runtime_client,
+                sandbox_policy,
+                sig,
+                dry_run=dry_run,
+                zerolang_path=zerolang_path,
             )
 
         results = await asyncio.gather(*[run_layer_task(t) for t in layer])

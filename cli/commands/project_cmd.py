@@ -33,6 +33,7 @@ async def execute(
         sandbox_policy=sandbox_policy,
         agent_signatures=KNOWN_SIGNATURES,
         dry_run=dry_run,
+        zerolang_path=context.settings.compiler.zerolang_path,
     )
 
     task_results = []

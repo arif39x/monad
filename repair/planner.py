@@ -1,9 +1,30 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from compiler.models import CompilerDiagnostic
 from diagnostics import FailureClass, classify_diagnostic
 from orchestration.config import RepairSettings
 from repair.models import RepairAction, RepairDirective, RepairPlan
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+async def verify_proposed_change(
+    change_content: str,
+    zerolang_path: str = "zerolang",
+) -> tuple[bool, str]:
+    """
+    Zero-Repair Flow:
+    1. Run zerolang --check <proposed_change>.
+    2. If Pass: Return (True, success_msg).
+    3. If Fail: Return (False, diagnostic_error).
+    """
+    from compiler.zero_compiler import check_proposed_change
+
+    passed, message = await check_proposed_change(change_content, zerolang_path)
+    return passed, message
 
 
 def build_repair_plan(

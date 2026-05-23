@@ -170,7 +170,8 @@ def main() -> None:
             import json as j
             print(j.dumps({"status": "ok", "message": "Monad v0.1.0 — multi-agent CLI workspace"}))
         else:
-            run_interactive()
+            from cli.tui import run_tui
+            run_tui()
         return
 
     if args.help:
