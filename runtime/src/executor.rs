@@ -23,7 +23,7 @@ impl RuntimeExecutor {
             return Err(RuntimeError::InvalidRequest("command cannot be empty".to_string()));
         }
 
-        self.policy.validate_command(&request.command)?;
+        self.policy.validate_command(&request.command, &request.policy_level)?;
 
         let cwd = Path::new(&request.cwd);
         if !cwd.exists() {
@@ -91,7 +91,7 @@ impl RuntimeExecutor {
             exit_code: status.code().unwrap_or(-1),
             stdout,
             stderr,
-            duration_ms: start.elapsed().as_millis(),
+            duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
         })
     }
 }

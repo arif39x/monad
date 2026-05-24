@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from cli.context import CliContext
-from orchestration.agent_detector import KNOWN_SIGNATURES, detect_agents
+from orchestration.agent_detector import detect_agents
+from orchestration.adapters.registry import get_adapter
+from orchestration.adapters.base import AdapterContext
 
 
 def execute(context: CliContext | None) -> dict[str, object]:
@@ -9,8 +11,10 @@ def execute(context: CliContext | None) -> dict[str, object]:
 
     agents_list: list[dict[str, object]] = []
     for agent in sorted(detected, key=lambda a: a.name):
-        sig = KNOWN_SIGNATURES.get(agent.binary, ("{prompt}",))
-        signature_display = " ".join(sig).replace("{prompt}", '"<prompt>"')
+        adapter = get_adapter(agent.binary)
+        ctx = AdapterContext(prompt="<prompt>", model="<model>")
+        cmd = adapter.build_command(agent.binary, ctx)
+        signature_display = " ".join(cmd)
         agents_list.append(
             {
                 "name": agent.name,

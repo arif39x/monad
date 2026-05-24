@@ -9,17 +9,35 @@ class SandboxPolicy:
     def __init__(self, settings: SandboxSettings) -> None:
         self._settings = settings
 
-    def command_allowed(self, command: list[str]) -> bool:
+    def command_allowed(self, command: list[str], policy_level: str = "standard") -> bool:
         if not command:
             return False
+        
+        if policy_level.lower() == "privileged":
+            return True
+            
         executable = command[0]
-        return any(executable.startswith(prefix) for prefix in self._settings.allowed_command_prefixes)
+        import os
+        exe_name = os.path.basename(executable)
+        
+        for prefix in self._settings.allowed_command_prefixes:
+            if exe_name == prefix or executable == prefix:
+                return True
+                
+        if policy_level.lower() == "restricted":
+            return False
+            
+        return False
 
-    def read_allowed(self, path: Path) -> bool:
+    def read_allowed(self, path: Path, policy_level: str = "standard") -> bool:
+        if policy_level.lower() == "privileged":
+            return True
         resolved = path.resolve()
         return _is_in_roots(resolved, self._settings.allowed_read_roots)
 
-    def write_allowed(self, path: Path) -> bool:
+    def write_allowed(self, path: Path, policy_level: str = "standard") -> bool:
+        if policy_level.lower() == "privileged":
+            return True
         resolved = path.resolve()
         return _is_in_roots(resolved, self._settings.allowed_write_roots)
 

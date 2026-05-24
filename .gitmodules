@@ -1,0 +1,3 @@
+[submodule "native/zero-c"]
+	path = native/zero-c
+	url = https://github.com/vercel-labs/zerolang

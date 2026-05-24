@@ -6,12 +6,12 @@ import shutil
 from pathlib import Path
 
 BANNER_PATH = Path(__file__).parent.parent / "assets" / "ascii.txt"
-IDEAS_PATH = Path(__file__).parent.parent / "monad-ideas.md"
+IDEAS_PATH = Path(__file__).parent.parent / "elyon-ideas.md"
 
 ABOUT_TEXT = """
-\033[1;36mMONAD — Multi-Agent Orchestration & Automation Dashboard\033[0m
+\033[1;36mELYON — Multi-Agent Orchestration & Automation Dashboard\033[0m
 
-\033[37mMonad is a deterministic, modular, multi-agent CLI workspace designed
+\033[37mElyon is a deterministic, modular, multi-agent CLI workspace designed
 for autonomous software engineering. It detects AI coding agents
 installed on your system and orchestrates them through structured
 project files — no single-agent lock-in.\033[0m
@@ -23,8 +23,8 @@ project files — no single-agent lock-in.\033[0m
   \033[32m•\033[0m \033[37mToken-optimized — built-in Zero compiler reduces LLM costs
   \033[32m•\033[0m \033[37mDynamic discovery — finds new agents automatically, no config needed\033[0m
 
-\033[1;33mWhy Monad is different\033[0m
-\033[37m  Unlike single-agent tools, Monad coordinates multiple specialized
+\033[1;33mWhy Elyon is different\033[0m
+\033[37m  Unlike single-agent tools, Elyon coordinates multiple specialized
   agents across a project — each handling the tasks they're best
   suited for. It's a conductor, not another musician.\033[0m
 
@@ -37,7 +37,7 @@ project files — no single-agent lock-in.\033[0m
 
 HELP_TEXT = """
 \033[1;36mAvailable commands\033[0m
-\033[37m  \033[32mabout\033[0m    \033[37mWhat is Monad and why it exists
+\033[37m  \033[32mabout\033[0m    \033[37mWhat is Elyon and why it exists
   \033[32mhelp\033[0m     \033[37mShow this help message
   \033[32magents\033[0m   \033[37mDetect and list AI agents installed on your system
   \033[32mconfig\033[0m   \033[37mShow project configuration and template files
@@ -49,7 +49,7 @@ HELP_TEXT = """
   \033[32m sandbox\033[0m  \033[37mValidate sandbox policy rules
   \033[32mtrace\033[0m    \033[37mLook up an execution trace by ID
   \033[32minit\033[0m     \033[37mGenerate a starter configuration
-  \033[32mexit\033[0m     \033[37mExit Monad (also Ctrl+D or Ctrl+C)\033[0m
+  \033[32mexit\033[0m     \033[37mExit Elyon (also Ctrl+D or Ctrl+C)\033[0m
 """
 
 
@@ -62,7 +62,7 @@ def _read_logo() -> list[str]:
 def _format_side_logo(logo_lines: list[str]) -> str:
     lines: list[str] = []
     info = [
-        "\033[1;36mmonad v0.1.0\033[0m",
+        "\033[1;36melyon v0.1.0\033[0m",
         "\033[37mmulti-agent CLI workspace\033[0m",
         "\033[32mtype 'help' for commands\033[0m",
     ]
@@ -93,7 +93,7 @@ def print_welcome() -> None:
         print(_format_side_logo(logo_lines))
     else:
         term_width = shutil.get_terminal_size().columns
-        title = "\033[1;36mmonad v0.1.0\033[0m"
+        title = "\033[1;36melyon v0.1.0\033[0m"
         print(f"{title:^{term_width}}")
         print("\033[37mtype 'help' for commands\033[0m".center(term_width))
         print()
@@ -106,7 +106,7 @@ def run_interactive() -> None:
 
     while True:
         try:
-            user_input = input("\033[1;36mmonad\033[0m\033[37m> \033[0m").strip()
+            user_input = input("\033[1;36melyon\033[0m\033[37m> \033[0m").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -135,7 +135,7 @@ def run_interactive() -> None:
 
         args = shlex.split(user_input)
 
-        if args[0] == "monad":
+        if args[0] == "elyon":
             args = args[1:]
 
         if not args:
@@ -167,7 +167,9 @@ def run_interactive() -> None:
 
 
 def _handle_agents() -> None:
-    from orchestration.agent_detector import KNOWN_SIGNATURES, detect_agents
+    from orchestration.agent_detector import detect_agents
+    from orchestration.adapters.registry import get_adapter
+    from orchestration.adapters.base import AdapterContext
 
     detected = detect_agents()
     if not detected:
@@ -176,30 +178,32 @@ def _handle_agents() -> None:
 
     print(f"\n\033[1;36mDetected agents ({len(detected)}):\033[0m\n")
     for agent in sorted(detected, key=lambda a: a.name):
-        sig = KNOWN_SIGNATURES.get(agent.binary, ("{prompt}",))
-        signature_display = " ".join(sig).replace("{prompt}", '"<prompt>"')
+        adapter = get_adapter(agent.binary)
+        ctx = AdapterContext(prompt="<prompt>", model="<model>")
+        cmd = adapter.build_command(agent.binary, ctx)
+        signature_display = " ".join(cmd)
         print(f"  \033[32m{agent.name:12}\033[0m  {agent.path}")
         print(f"  {'':12}  \033[90m{agent.description}\033[0m")
         print(f"  {'':12}  \033[90msignature: {signature_display}\033[0m")
         print()
-    print(f"\033[90mTip: run 'monad agents --json' for machine-readable output\033[0m\n")
+    print(f"\033[90mTip: run 'elyon agents --json' for machine-readable output\033[0m\n")
 
 
 def _handle_config() -> None:
     import os
 
     print(f"\n\033[1;36mConfiguration\033[0m\n")
-    print(f"  \033[32mmonad.toml\033[0m       \033[37mMain config — agents, providers, sandbox policies\033[0m")
+    print(f"  \033[32melyon.toml\033[0m       \033[37mMain config — agents, providers, sandbox policies\033[0m")
     print(f"                     \033[37mMaps CLI agents to project roles\033[0m")
 
     ideas_exists = IDEAS_PATH.exists()
     ideas_status = "\033[32m✓ exists\033[0m" if ideas_exists else "\033[33mnot yet created\033[0m"
-    print(f"  \033[32mmonad-ideas.md\033[0m   \033[37mTemplate for project ideas ({ideas_status})\033[0m")
-    print(f"                     \033[37mDescribe your project goals, Monad builds the plan\033[0m")
+    print(f"  \033[32melyon-ideas.md\033[0m   \033[37mTemplate for project ideas ({ideas_status})\033[0m")
+    print(f"                     \033[37mDescribe your project goals, Elyon builds the plan\033[0m")
     print()
 
     config_dir = Path(os.getcwd())
-    toml_path = config_dir / "monad.toml"
+    toml_path = config_dir / "elyon.toml"
     if toml_path.exists():
         print(f"  \033[90mLocal config: {toml_path}\033[0m\n")
         print(f"  \033[90m{toml_path.read_text()[:600]}\033[0m")

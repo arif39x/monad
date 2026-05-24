@@ -1,4 +1,4 @@
-from orchestration.events.models import EventMetadata, EventType, MonadEvent
+from orchestration.events.models import EventMetadata, EventType, ElyonEvent
 from orchestration.events.store import EventStore, InMemoryEventStore, JsonlEventStore
 
 __all__ = [
@@ -7,5 +7,5 @@ __all__ = [
     "EventType",
     "InMemoryEventStore",
     "JsonlEventStore",
-    "MonadEvent",
+    "ElyonEvent",
 ]

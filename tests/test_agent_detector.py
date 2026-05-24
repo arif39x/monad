@@ -5,7 +5,6 @@ import tempfile
 
 from orchestration.agent_detector import (
     _heuristic_name,
-    _resolve_signature,
     _resolve_description,
     detect_agents,
 )
@@ -38,17 +37,6 @@ def test_heuristic_name_rejects_non_ai_binaries() -> None:
 def test_heuristic_name_token_boundary_no_false_positive() -> None:
     assert _heuristic_name("chroot") is False
     assert _heuristic_name("clone") is False
-
-
-def test_resolve_signature_known() -> None:
-    assert _resolve_signature("claude") == ("-p", "{prompt}")
-    assert _resolve_signature("aider") == ("--message", "{prompt}")
-    assert _resolve_signature("gemini") == ("ask", "{prompt}")
-    assert _resolve_signature("ollama") == ("run", "{model}", "{prompt}")
-
-
-def test_resolve_signature_unknown_falls_back() -> None:
-    assert _resolve_signature("unknown-tool") == ("{prompt}",)
 
 
 def test_resolve_description_known() -> None:
@@ -85,5 +73,10 @@ def test_detect_agents_scans_path(tmp_path: None) -> None:
             agents = detect_agents()
             names = [a.name for a in agents]
             assert "opencode" in names
+            
+            # Verify adapter
+            opencode_agent = next(a for a in agents if a.name == "opencode")
+            assert opencode_agent.adapter is not None
+            assert opencode_agent.adapter.name == "default"
         finally:
             os.environ["PATH"] = old_path

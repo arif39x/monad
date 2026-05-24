@@ -1,4 +1,5 @@
 use crate::error::RuntimeError;
+use crate::models::PolicyLevel;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -21,10 +22,18 @@ impl SandboxPolicy {
         }
     }
 
-    pub fn validate_command(&self, command: &[String]) -> Result<(), RuntimeError> {
+    pub fn validate_command(
+        &self,
+        command: &[String],
+        level: &PolicyLevel,
+    ) -> Result<(), RuntimeError> {
         let Some(executable) = command.first() else {
             return Err(RuntimeError::InvalidRequest("empty command".to_string()));
         };
+
+        if matches!(level, PolicyLevel::Privileged) {
+            return Ok(());
+        }
 
         let allowed = self
             .allowed_prefixes
@@ -38,14 +47,26 @@ impl SandboxPolicy {
         Ok(())
     }
 
-    pub fn validate_read_path(&self, path: &Path) -> Result<(), RuntimeError> {
+    pub fn validate_read_path(&self, path: &Path, level: &PolicyLevel) -> Result<(), RuntimeError> {
+        if matches!(level, PolicyLevel::Privileged) {
+            return Ok(());
+        }
+
         if is_path_allowed(path, &self.allowed_read_roots) {
             return Ok(());
         }
         Err(RuntimeError::SandboxDenied(path.display().to_string()))
     }
 
-    pub fn validate_write_path(&self, path: &Path) -> Result<(), RuntimeError> {
+    pub fn validate_write_path(
+        &self,
+        path: &Path,
+        level: &PolicyLevel,
+    ) -> Result<(), RuntimeError> {
+        if matches!(level, PolicyLevel::Privileged) {
+            return Ok(());
+        }
+
         if is_path_allowed(path, &self.allowed_write_roots) {
             return Ok(());
         }

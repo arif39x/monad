@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 async def verify_proposed_change(
     change_content: str,
-    zerolang_path: str = "zerolang",
+    zerolang_path: str | None = None,
 ) -> tuple[bool, str]:
     """
     Zero-Repair Flow:
@@ -93,7 +93,7 @@ def _directive_for(failure_class: FailureClass, diagnostic: CompilerDiagnostic) 
     if failure_class is FailureClass.TIMEOUT:
         return RepairDirective(
             action=RepairAction.ADJUST_CONFIG,
-            target_file="configs/monad.toml",
+            target_file="configs/elyon.toml",
             reason=diagnostic.message,
             instructions="Tune timeout values conservatively and retry.",
             failure_class=failure_class,

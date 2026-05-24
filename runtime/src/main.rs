@@ -1,4 +1,4 @@
-use monad_runtime::{ExecRequest, RuntimeExecutor, RuntimeError, SandboxPolicy};
+use elyon_runtime::{ExecRequest, RuntimeExecutor, RuntimeError, SandboxPolicy};
 use serde_json::json;
 use std::env;
 use std::io::{self, Read};
@@ -20,7 +20,7 @@ async fn main() {
         }
     };
 
-    let allowed_prefixes = env::var("MONAD_RUNTIME_ALLOWED_PREFIXES")
+    let allowed_prefixes = env::var("ELYON_RUNTIME_ALLOWED_PREFIXES")
         .ok()
         .map(|value| {
             value

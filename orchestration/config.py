@@ -54,6 +54,7 @@ class SandboxSettings(BaseModel):
     allowed_command_prefixes: list[str]
     allowed_read_roots: list[str]
     allowed_write_roots: list[str]
+    default_policy_level: str = "standard"
 
 
 class StateSettings(BaseModel):
@@ -61,10 +62,10 @@ class StateSettings(BaseModel):
 
 
 class CompilerSettings(BaseModel):
-    zerolang_path: str = Field(default="zerolang")
+    zerolang_path: str | None = Field(default=None)
 
 
-class MonadSettings(BaseModel):
+class ElyonSettings(BaseModel):
     default_provider: str
     providers: dict[str, ProviderSettings]
     agents: dict[str, AgentSettings] = {}
@@ -93,7 +94,7 @@ class MonadSettings(BaseModel):
         return os.getenv(provider.api_key_env)
 
 
-def load_settings(path: Path) -> MonadSettings:
+def load_settings(path: Path) -> ElyonSettings:
     if not path.exists():
         raise ConfigError(f"Config file does not exist: {path}")
 
@@ -105,10 +106,10 @@ def load_settings(path: Path) -> MonadSettings:
         raise ConfigError(f"Config file has invalid TOML: {path}") from exc
 
     try:
-        return MonadSettings.model_validate(raw)
+        return ElyonSettings.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError("Config validation failed") from exc
 
 
-def settings_to_dict(settings: MonadSettings) -> dict[str, Any]:
+def settings_to_dict(settings: ElyonSettings) -> dict[str, Any]:
     return settings.model_dump(mode="json")

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import logging
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from time import perf_counter
 
 
-@dataclass(frozen=True)
+@dataclass
 class Timing:
     operation: str
-    duration_ms: int
+    raw_tokens: int = 0
+    ast_tokens: int = 0
+    elapsed_ms: float = 0.0
+    emitted: bool = False
 
 
 @dataclass(frozen=True)
@@ -35,10 +39,19 @@ def calculate_sdr(raw_token_count: int, ast_token_count: int) -> SemanticMetrics
 
 
 @contextmanager
-def measure(operation: str):
-    start = perf_counter()
+def measure(operation: str, logger: logging.Logger | None = None):
+    start = time.monotonic()
+    timing = Timing(operation=operation)
     try:
-        yield
+        yield timing
     finally:
-        duration_ms = int((perf_counter() - start) * 1000)
-        _ = Timing(operation=operation, duration_ms=duration_ms)
+        timing.elapsed_ms = (time.monotonic() - start) * 1000
+        timing.emitted = True
+        if logger:
+            logger.info("timing", extra={
+                "operation": timing.operation,
+                "elapsed_ms": timing.elapsed_ms,
+                "raw_tokens": timing.raw_tokens,
+                "ast_tokens": timing.ast_tokens,
+                "sdr": calculate_sdr(timing.raw_tokens, timing.ast_tokens).sdr,
+            })

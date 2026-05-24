@@ -27,7 +27,7 @@ from cli.output import render
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="monad", add_help=False)
+    parser = argparse.ArgumentParser(prog="elyon", add_help=False)
     parser.add_argument("--json", action="store_true", help="Emit JSON output")
     parser.add_argument("--help", action="store_true", help="Show this help message")
 
@@ -44,10 +44,16 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--stream", action="store_true")
     run_parser.add_argument("--session-id")
 
+    broadcast_parser = subparsers.add_parser("broadcast")
+    broadcast_parser.add_argument("--config")
+    broadcast_parser.add_argument("--prompt", required=True)
+    broadcast_parser.add_argument("--providers", required=True, nargs="+")
+
     repair_parser = subparsers.add_parser("repair")
     repair_parser.add_argument("--config")
     repair_parser.add_argument("--diagnostics", required=True)
     repair_parser.add_argument("--attempt", required=True, type=int)
+    repair_parser.add_argument("--apply", action="store_true")
 
     doctor_parser = subparsers.add_parser("doctor")
     doctor_parser.add_argument("--config")
@@ -87,10 +93,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_config_path(raw_path: str | None) -> Path:
-    env_path = os.getenv("MONAD_CONFIG")
+    env_path = os.getenv("ELYON_CONFIG")
     selected = raw_path or env_path
     if selected is None:
-        raise ValueError("No config path provided. Pass --config or set MONAD_CONFIG.")
+        raise ValueError("No config path provided. Pass --config or set ELYON_CONFIG.")
     return Path(selected)
 
 
@@ -105,7 +111,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         return execute_zero_compile(Path(args.zero))
 
     if args.command == "agents":
-        config_path = getattr(args, "config", None) or os.getenv("MONAD_CONFIG")
+        config_path = getattr(args, "config", None) or os.getenv("ELYON_CONFIG")
         if config_path:
             context = build_context(Path(config_path))
             return agents_execute(context)
@@ -128,6 +134,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             context,
             diagnostics_path=Path(args.diagnostics),
             attempt=args.attempt,
+            apply=args.apply,
         )
 
     if args.command == "doctor":
@@ -144,6 +151,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.command == "trace":
         return await trace_execute(context, trace_id=args.trace_id)
+
+    if args.command == "broadcast":
+        return await broadcast_execute(context, prompt=args.prompt, providers=args.providers)
 
     if args.command == "compile":
         if not args.exec_command:
@@ -168,7 +178,7 @@ def main() -> None:
     if args.command is None and not args.help:
         if args.json:
             import json as j
-            print(j.dumps({"status": "ok", "message": "Monad v0.1.0 — multi-agent CLI workspace"}))
+            print(j.dumps({"status": "ok", "message": "Elyon v0.1.0 — multi-agent CLI workspace"}))
         else:
             from cli.tui import run_tui
             run_tui()
@@ -177,7 +187,7 @@ def main() -> None:
     if args.help:
         if args.json:
             import json as j
-            print(j.dumps({"status": "ok", "message": "Monad v0.1.0 — multi-agent CLI workspace"}))
+            print(j.dumps({"status": "ok", "message": "Elyon v0.1.0 — multi-agent CLI workspace"}))
         else:
             from cli.banner import HELP_TEXT
             print(HELP_TEXT)

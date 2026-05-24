@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from cli.context import CliContext
-from orchestration.agent_detector import KNOWN_SIGNATURES
 from orchestration.project import execute_plan, parse_project_jsonl
 from sandbox.policy import SandboxPolicy
 
@@ -31,7 +30,6 @@ async def execute(
         working_dir=working_dir,
         runtime_client=context.runtime_client,
         sandbox_policy=sandbox_policy,
-        agent_signatures=KNOWN_SIGNATURES,
         dry_run=dry_run,
         zerolang_path=context.settings.compiler.zerolang_path,
     )

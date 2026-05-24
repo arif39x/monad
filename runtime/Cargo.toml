@@ -1,42 +1,35 @@
 [package]
-name = "monad-runtime"
+name = "elyon-runtime"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-description = "Runtime execution core and TUI for Monad"
+description = "Runtime execution core and TUI for Elyon"
 
 [lib]
-name = "monad_runtime"
+name = "elyon_runtime"
 path = "src/lib.rs"
 
 [[bin]]
-name = "monad-runtime"
+name = "elyon-runtime"
 path = "src/main.rs"
 
 [[bin]]
-name = "monad-tui"
-path = "src/bin/monad-tui.rs"
-
-[dependencies]
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "1.0"
-tokio = { version = "1.39", features = ["process", "io-util", "macros", "rt-multi-thread", "time", "sync", "io-std"] }
-tracing = "0.1"
-ratatui = { version = "0.29", features = ["all-widgets"], optional = true }
-crossterm = { version = "0.28", optional = true }
-futures = { version = "0.3", optional = true }
-chrono = { version = "0.4", optional = true }
+name = "elyon-tui"
+path = "src/bin/elyon-tui.rs"
+required-features = ["tui"]
 
 [features]
-default = ["runtime"]
-runtime = []
-tui = ["ratatui", "crossterm", "futures", "chrono"]
+default = []
+tui = ["ratatui", "crossterm", "tokio/full", "sysinfo"]
 
-[profile.release]
-opt-level = "z"      # Optimize for size
-lto = true           # Enable Link Time Optimization (LTO)
-codegen-units = 1    # Reduce parallel code generation units to increase optimization
-panic = "abort"      # Remove panic string formatting/backtrace code
-strip = true         # Automatically strip symbols from the binary
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "macros", "process", "sync", "time", "io-util", "io-std"] }
+ratatui = { version = "0.26", optional = true }
+crossterm = { version = "0.27", optional = true }
+thiserror = "1.0"
+futures = "0.3"
+reqwest = { version = "0.13.3", features = ["json"] }
+toml = "1.1.2"
+uuid = { version = "1.23.1", features = ["v4"] }
+sysinfo = { version = "0.33", optional = true }

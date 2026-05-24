@@ -4,7 +4,7 @@ import asyncio
 import importlib
 from collections.abc import Callable
 
-from orchestration.config import MonadSettings
+from orchestration.config import ElyonSettings
 from providers.base import ProviderClient
 from providers.http_provider import HttpProvider
 
@@ -40,7 +40,7 @@ class ProviderRegistry:
         return sorted(self._factories.keys())
 
 
-def build_registry(settings: MonadSettings) -> ProviderRegistry:
+def build_registry(settings: ElyonSettings) -> ProviderRegistry:
     registry = ProviderRegistry()
 
     for provider_name, provider_settings in settings.providers.items():

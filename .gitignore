@@ -1,4 +1,3 @@
-# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -9,22 +8,18 @@ build/
 .venv/
 venv/
 env/
-
-# Rust
+.pytest_cache/
+.mypy_cache/
 runtime/target/
-
-# State / logs
+.zero/
+.zerotmp/
+diagnostics/
 state/
 *.log
-
-# Config overrides
-monad.local.toml
-
-# OS
+*.local.toml
+command.txt
 .DS_Store
 Thumbs.db
-
-# IDE
 .idea/
 *.swp
 *.swo

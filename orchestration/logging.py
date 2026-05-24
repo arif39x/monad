@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from pathlib import Path
 
 try:
     import structlog
@@ -12,7 +13,15 @@ from orchestration.config import TelemetrySettings
 
 
 def configure_logging(settings: TelemetrySettings) -> None:
-    logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
+    # Always log to a file to prevent polluting the TUI (stdout)
+    log_file = Path("elyon.log")
+    
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        filename=log_file,
+        filemode="a",
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
 
     if structlog is None:
         return
@@ -30,6 +39,7 @@ def configure_logging(settings: TelemetrySettings) -> None:
 
     structlog.configure(
         processors=processors,
+        # Use a wrapper that writes to a file instead of stdout
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )

@@ -10,7 +10,6 @@ from orchestration.project import (
     ProjectPlan,
     ProjectTask,
     TaskResult,
-    _build_command,
     _estimate_tokens,
     _group_by_depth,
     execute_plan,
@@ -23,21 +22,6 @@ def test_estimate_tokens() -> None:
     assert _estimate_tokens("hello") == 1
     assert _estimate_tokens("a" * 100) == 25
     assert _estimate_tokens("") == 0
-
-
-def test_build_command_plain() -> None:
-    cmd = _build_command("opencode", "write tests", ("{prompt}",))
-    assert cmd == ["opencode", "write tests"]
-
-
-def test_build_command_with_flags() -> None:
-    cmd = _build_command("claude", "hello", ("-p", "{prompt}"))
-    assert cmd == ["claude", "-p", "hello"]
-
-
-def test_build_command_with_model() -> None:
-    cmd = _build_command("ollama", "hi", ("run", "{model}", "{prompt}"))
-    assert cmd == ["ollama", "run", "default", "hi"]
 
 
 def test_group_by_depth_single_task() -> None:
@@ -124,7 +108,6 @@ def test_run_task_dry_run() -> None:
             working_dir=Path("/tmp"),
             runtime_client=None,  # type: ignore[arg-type]
             sandbox_policy=_allow_all_policy(),
-            signature=("{prompt}",),
             dry_run=True,
         )
     )
@@ -140,7 +123,6 @@ def test_run_task_skipped_when_dep_failed() -> None:
             working_dir=Path("/tmp"),
             runtime_client=None,  # type: ignore[arg-type]
             sandbox_policy=_allow_all_policy(),
-            agent_signatures={"opencode": ("{prompt}",)},
             dry_run=False,
         )
     )
@@ -161,7 +143,6 @@ def test_execute_plan_dry_run() -> None:
             working_dir=Path("/tmp"),
             runtime_client=None,  # type: ignore[arg-type]
             sandbox_policy=_allow_all_policy(),
-            agent_signatures={"opencode": ("{prompt}",)},
             dry_run=True,
         )
     )
@@ -178,7 +159,6 @@ def test_execute_plan_maintains_order() -> None:
             working_dir=Path("/tmp"),
             runtime_client=None,  # type: ignore[arg-type]
             sandbox_policy=_allow_all_policy(),
-            agent_signatures={"a": ("{prompt}",)},
             dry_run=True,
         )
     )
@@ -193,13 +173,13 @@ def test_execute_plan_maintains_order() -> None:
 
 def _allow_all_policy() -> Any:
     class _AllowAll:
-        def command_allowed(self, cmd: list[str]) -> bool:
+        def command_allowed(self, cmd: list[str], policy_level: str = "standard") -> bool:
             return True
 
-        def read_allowed(self, path: Path) -> bool:
+        def read_allowed(self, path: Path, policy_level: str = "standard") -> bool:
             return True
 
-        def write_allowed(self, path: Path) -> bool:
+        def write_allowed(self, path: Path, policy_level: str = "standard") -> bool:
             return True
 
     return _AllowAll()

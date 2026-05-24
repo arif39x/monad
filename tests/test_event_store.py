@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import asyncio
 
-from orchestration.events import EventType, InMemoryEventStore, MonadEvent
+from orchestration.events import EventType, InMemoryEventStore, ElyonEvent
 
 
 def test_in_memory_event_store_persists_events_by_trace() -> None:
     async def scenario() -> None:
         store = InMemoryEventStore()
 
-        first = MonadEvent.create(
+        first = ElyonEvent.create(
             event_type=EventType.PROMPT_ISSUED,
             payload={"index": 1},
             trace_id="trace-a",
             actor="planner",
         )
-        second = MonadEvent.create(
+        second = ElyonEvent.create(
             event_type=EventType.PROVIDER_RESPONDED,
             payload={"index": 2},
             trace_id="trace-b",
@@ -36,7 +36,7 @@ def test_event_store_supports_concurrent_appends() -> None:
         store = InMemoryEventStore()
 
         async def append_event(index: int) -> None:
-            event = MonadEvent.create(
+            event = ElyonEvent.create(
                 event_type=EventType.SUBPROCESS_SPAWNED,
                 payload={"index": index},
                 trace_id="trace-concurrency",

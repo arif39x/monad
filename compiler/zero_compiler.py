@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -8,75 +10,138 @@ from pathlib import Path
 from typing import Any
 
 ZERO_EXT = ".zero"
+ZEROLANG_EXT = ".0"
+
+ZERO_BINARY = "zero"
 
 
-async def get_ast_skeleton(path: Path, zerolang_path: str = "zerolang") -> str:
+async def get_ast_skeleton(path: Path, zerolang_path: str | None = None) -> tuple[str, list[dict[str, Any]]]:
     """
-    Invoke zerolang on the requested file to get its AST structure.
-    If zerolang is not available, falls back to a basic language-specific skeleton.
+    For zerolang (.0) files: invoke `zero parse --json` to get structured parse data.
+    For other files: falls back to a basic language-specific skeleton.
     """
-    if shutil.which(zerolang_path):
-        try:
-            process = await asyncio.create_subprocess_exec(
-                zerolang_path,
-                str(path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await process.communicate()
-            if process.returncode == 0:
-                return stdout.decode("utf-8")
-            else:
-                return f"Error: zerolang failed with code {process.returncode}: {stderr.decode('utf-8')}"
-        except Exception as e:
-            return f"Error: Failed to execute zerolang: {e}"
+    ext = path.suffix.lower()
+    if ext == ZEROLANG_EXT:
+        binary = _resolve_zero_binary(zerolang_path)
+        if binary:
+            return await _parse_zerolang_file(path, binary)
+        return "(zerolang compiler not found)", []
 
-    # Fallback logic for when zerolang is missing
     return _generate_fallback_skeleton(path)
 
 
-def _generate_fallback_skeleton(path: Path) -> str:
+def _resolve_zero_binary(zerolang_path: str | None) -> str | None:
+    if zerolang_path:
+        candidate = shutil.which(zerolang_path) or zerolang_path
+        if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    local = Path(".zero/bin/zero")
+    if local.is_file() and os.access(local, os.X_OK):
+        return str(local.resolve())
+    return shutil.which(ZERO_BINARY)
+
+
+async def _parse_zerolang_file(path: Path, binary: str) -> tuple[str, list[dict[str, Any]]]:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            binary, "parse", "--json", str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            return f"Error: zero parse failed ({process.returncode}): {stderr.decode('utf-8')}", []
+        data = json.loads(stdout.decode("utf-8"))
+    except Exception as e:
+        return f"Error: zero parse failed: {e}", []
+
+    skeleton_lines = [f"// {data.get('sourceFile', path.name)}"]
+    knowledge: list[dict[str, Any]] = []
+
+    for fn in data.get("functions", []):
+        fn_name = fn.get("name", "?")
+        return_type = fn.get("returnType", "Void")
+        param_count = fn.get("paramCount", 0)
+        body_kinds = ", ".join(fn.get("bodyKinds", []))
+        skeleton_lines.append(f"fn {fn_name} {return_type} # params={param_count}, body={{{body_kinds}}}")
+        knowledge.append({
+            "symbol": fn_name,
+            "content": f"function {fn_name}: {return_type}, {param_count} params",
+            "kind": "zerolang-function",
+            "line": fn.get("line", 0),
+        })
+
+    root = data.get("root", {})
+    skeleton_lines.insert(0, f"// module: {root.get('functionCount', 0)} functions, "
+                             f"{root.get('shapeCount', 0)} shapes, "
+                             f"{root.get('enumCount', 0)} enums")
+
+    return "\n".join(skeleton_lines), knowledge
+
+
+def _generate_fallback_skeleton(path: Path) -> tuple[str, list[dict[str, Any]]]:
     ext = path.suffix.lower()
     if ext == ".py":
         return _generate_python_skeleton(path)
     # Generic fallback
-    return f"(AST Skeleton for {path.name} - fallback)"
+    try:
+        return path.read_text(encoding="utf-8"), []
+    except Exception as e:
+        return f"(Fallback failed: {e})", []
 
 
-def _generate_python_skeleton(path: Path) -> str:
+def _generate_python_skeleton(path: Path) -> tuple[str, list[dict[str, Any]]]:
     try:
         import ast
 
         content = path.read_text(encoding="utf-8")
         tree = ast.parse(content)
         skeleton = []
+        knowledge = []
+
         for node in tree.body:
             if isinstance(node, ast.FunctionDef):
                 args = [a.arg for a in node.args.args]
                 skeleton.append(f"def {node.name}({', '.join(args)}): ...")
+                docstring = ast.get_docstring(node)
+                if docstring:
+                    knowledge.append({
+                        "symbol": node.name,
+                        "content": docstring,
+                        "kind": "docstring",
+                        "line": node.lineno
+                    })
             elif isinstance(node, ast.ClassDef):
                 skeleton.append(f"class {node.name}: ...")
-        return "\n".join(skeleton) or "(Empty Python AST)"
+                docstring = ast.get_docstring(node)
+                if docstring:
+                    knowledge.append({
+                        "symbol": node.name,
+                        "content": docstring,
+                        "kind": "docstring",
+                        "line": node.lineno
+                    })
+        return "\n".join(skeleton) or "(Empty Python AST)", knowledge
     except Exception as e:
-        return f"(Python AST generation failed: {e})"
+        return f"(Python AST generation failed: {e})", []
 
 
-async def check_proposed_change(change_content: str, zerolang_path: str = "zerolang") -> tuple[bool, str]:
+async def check_proposed_change(change_content: str, zerolang_path: str | None = None) -> tuple[bool, str]:
     """
-    Run zerolang --check on a proposed change.
+    Run `zero check --json` on proposed zerolang code.
     """
-    if not shutil.which(zerolang_path):
-        return True, "zerolang not found, skipping check"
+    binary = _resolve_zero_binary(zerolang_path)
+    if not binary:
+        return True, f"{ZERO_BINARY} not found, skipping check"
 
     try:
-        # Create a temporary file for checking
-        temp_file = Path(".zerotmp_check")
+        temp_dir = Path(".zerotmp")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_file = temp_dir / ".zerotmp_check.0"
         temp_file.write_text(change_content, encoding="utf-8")
         try:
             process = await asyncio.create_subprocess_exec(
-                zerolang_path,
-                "--check",
-                str(temp_file),
+                binary, "check", "--json", str(temp_file),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -88,8 +153,13 @@ async def check_proposed_change(change_content: str, zerolang_path: str = "zerol
         finally:
             if temp_file.exists():
                 temp_file.unlink()
+            if temp_dir.exists():
+                try:
+                    temp_dir.rmdir()
+                except OSError:
+                    pass
     except Exception as e:
-        return False, f"Error: Failed to run zerolang --check: {e}"
+        return False, f"Error: Failed to run {ZERO_BINARY} check: {e}"
 
 
 @dataclass(frozen=True)
@@ -207,8 +277,15 @@ def estimate_token_reduction(module: ZeroModule) -> dict[str, Any]:
 
 
 def compile_zero(path: Path) -> dict[str, Any]:
-    module = parse_zero_file(path)
-    reduction = estimate_token_reduction(module)
+    import logging
+    from telemetry.metrics import measure
+    logger = logging.getLogger(__name__)
+
+    with measure("compile_zero", logger) as timing:
+        module = parse_zero_file(path)
+        reduction = estimate_token_reduction(module)
+        timing.raw_tokens = module.raw_token_count
+        timing.ast_tokens = module.optimized_token_count
 
     return {
         "status": "ok",

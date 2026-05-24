@@ -7,19 +7,19 @@ from uuid import uuid4
 
 from bindings import RuntimeClient, RuntimeExecLimits, RuntimeExecRequest, RuntimeExecResponse
 from compiler import parse_structured_diagnostics
-from orchestration.config import MonadSettings
-from orchestration.events import EventStore, EventType, MonadEvent
+from orchestration.config import ElyonSettings
+from orchestration.events import ElyonEvent, EventStore, EventType
 from orchestration.logging import get_logger
 from providers import ProviderRegistry, ProviderRequest
 from repair import RepairPlan, build_repair_plan
 from state import InMemorySessionStore, SessionState
 
 
-class MonadEngine:
+class ElyonEngine:
     def __init__(
         self,
         *,
-        settings: MonadSettings,
+        settings: ElyonSettings,
         event_store: EventStore,
         session_store: InMemorySessionStore,
         provider_registry: ProviderRegistry,
@@ -30,7 +30,7 @@ class MonadEngine:
         self._session_store = session_store
         self._provider_registry = provider_registry
         self._runtime_client = runtime_client
-        self._logger = get_logger("monad.engine")
+        self._logger = get_logger("elyon.engine")
 
     async def run_prompt(
         self,
@@ -115,6 +115,21 @@ class MonadEngine:
             )
             raise
 
+    async def run_prompt_parallel(
+        self,
+        prompt: str,
+        providers: list[str],
+        trace_id: str,
+    ) -> list[str]:
+        async def run_single(provider: str) -> str:
+            return await self.run_prompt(
+                prompt=prompt,
+                provider_name=provider,
+                trace_id=trace_id,
+            )
+
+        return await asyncio.gather(*[run_single(p) for p in providers])
+
     async def execute_runtime_command(
         self,
         *,
@@ -123,7 +138,10 @@ class MonadEngine:
         trace_id: str | None = None,
         timeout_seconds: float | None = None,
         env: dict[str, str] | None = None,
+        policy_level: str | None = None,
     ) -> RuntimeExecResponse:
+        from bindings.runtime_client import RuntimePolicyLevel
+
         active_trace_id = trace_id or str(uuid4())
         resolved_cwd = str(Path(cwd).resolve())
         limits = RuntimeExecLimits(
@@ -136,6 +154,9 @@ class MonadEngine:
             cwd=resolved_cwd,
             env=env or {},
             limits=limits,
+            policy_level=RuntimePolicyLevel(
+                policy_level or self._settings.sandbox.default_policy_level
+            ),
         )
 
         await self._emit(
@@ -162,7 +183,7 @@ class MonadEngine:
                 duration_ms=int((perf_counter() - start) * 1000),
             )
             return response
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             await self._emit(
                 EventType.RUN_FAILED,
                 payload={"command": command, "cwd": resolved_cwd, "error": str(exc)},
@@ -204,7 +225,7 @@ class MonadEngine:
         )
         return plan
 
-    async def events_for_trace(self, trace_id: str) -> list[MonadEvent]:
+    async def events_for_trace(self, trace_id: str) -> list[ElyonEvent]:
         return await self._event_store.list_by_trace(trace_id)
 
     async def _resolve_session(self, session_id: str | None) -> SessionState:
@@ -226,8 +247,8 @@ class MonadEngine:
         trace_id: str,
         actor: str,
         duration_ms: int | None = None,
-    ) -> MonadEvent:
-        event = MonadEvent.create(
+    ) -> ElyonEvent:
+        event = ElyonEvent.create(
             event_type=event_type,
             payload=payload,
             trace_id=trace_id,

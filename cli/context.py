@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bindings import RuntimeClient, RustRuntimeClient
-from orchestration import MonadEngine, MonadSettings, load_settings
+from orchestration import ElyonEngine, ElyonSettings, load_settings
 from orchestration.events import JsonlEventStore
 from orchestration.logging import configure_logging
 from providers import MockProvider, ProviderRegistry, build_registry
@@ -13,14 +13,15 @@ from state import InMemorySessionStore
 
 @dataclass(frozen=True)
 class CliContext:
-    settings: MonadSettings
-    engine: MonadEngine
+    settings: ElyonSettings
+    engine: ElyonEngine
     providers: ProviderRegistry
     event_store: JsonlEventStore
     runtime_client: RuntimeClient
 
 
 def build_context(config_path: Path) -> CliContext:
+    import os
     settings = load_settings(config_path)
     configure_logging(settings.telemetry)
 
@@ -36,12 +37,20 @@ def build_context(config_path: Path) -> CliContext:
                 ),
             )
 
+    config_dir = config_path.parent
+    runtime_command = [
+        str((config_dir / cmd).resolve())
+        if not os.path.isabs(cmd) and (config_dir / cmd).exists()
+        else cmd
+        for cmd in settings.runtime.command
+    ]
+
     runtime_client = RustRuntimeClient(
-        runtime_command=settings.runtime.command,
+        runtime_command=runtime_command,
         allowed_command_prefixes=settings.sandbox.allowed_command_prefixes,
     )
 
-    engine = MonadEngine(
+    engine = ElyonEngine(
         settings=settings,
         event_store=event_store,
         session_store=InMemorySessionStore(),

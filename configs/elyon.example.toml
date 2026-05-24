@@ -18,10 +18,10 @@ default_temperature = 0.2
 default_max_tokens = 2048
 timeout_seconds = 20.0
 max_retries = 2
-api_key_env = "MONAD_PROVIDER_API_KEY"
+api_key_env = "ELYON_PROVIDER_API_KEY"
 
 [runtime]
-command = ["runtime/target/release/monad-runtime"]
+command = [".zero/bin/elyon-runtime"]
 request_timeout_seconds = 60.0
 max_stdout_bytes = 1048576
 max_stderr_bytes = 1048576
@@ -42,3 +42,10 @@ allowed_write_roots = ["."]
 
 [state]
 event_log_path = "./state/events.jsonl"
+
+[compiler]
+# Path to the zerolang compiler binary.
+# Omit (or set to empty) to auto-detect from:
+#   1. .zero/bin/zero (local build)
+#   2. $PATH (global install)
+# zerolang_path = ".zero/bin/zero"

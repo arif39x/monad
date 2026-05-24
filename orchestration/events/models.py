@@ -30,7 +30,7 @@ class EventMetadata(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict)
 
 
-class MonadEvent(BaseModel):
+class ElyonEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     event_id: str
@@ -48,7 +48,7 @@ class MonadEvent(BaseModel):
         actor: str,
         duration_ms: int | None = None,
         context: dict[str, Any] | None = None,
-    ) -> "MonadEvent":
+    ) -> "ElyonEvent":
         return cls(
             event_id=str(uuid4()),
             event_type=event_type,

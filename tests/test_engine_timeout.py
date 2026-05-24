@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from bindings import NullRuntimeClient
-from orchestration.config import MonadSettings
-from orchestration.engine import MonadEngine
+from orchestration.config import ElyonSettings
+from orchestration.engine import ElyonEngine
 from orchestration.events import EventType, InMemoryEventStore
 from providers import ProviderRegistry
 from providers.base import ProviderRequest, ProviderResponse
@@ -22,8 +22,8 @@ class SlowProvider:
         yield ""
 
 
-def _settings() -> MonadSettings:
-    return MonadSettings.model_validate(
+def _settings() -> ElyonSettings:
+    return ElyonSettings.model_validate(
         {
             "default_provider": "slow",
             "providers": {
@@ -68,7 +68,7 @@ def test_engine_timeout_emits_failure_event() -> None:
         registry = ProviderRegistry()
         registry.register_factory("slow", lambda: SlowProvider())
 
-        engine = MonadEngine(
+        engine = ElyonEngine(
             settings=settings,
             event_store=events,
             session_store=sessions,

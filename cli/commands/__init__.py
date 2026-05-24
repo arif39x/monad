@@ -8,6 +8,7 @@ from cli.commands.repair_cmd import execute as repair_execute
 from cli.commands.run_cmd import execute as run_execute
 from cli.commands.sandbox_cmd import execute as sandbox_execute
 from cli.commands.trace_cmd import execute as trace_execute
+from cli.commands.broadcast_cmd import execute as broadcast_execute
 
 __all__ = [
     "agents_execute",
@@ -22,4 +23,5 @@ __all__ = [
     "run_execute",
     "sandbox_execute",
     "trace_execute",
+    "broadcast_execute",
 ]

@@ -11,8 +11,16 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 
+from enum import StrEnum
+
 class RuntimeExecutionError(RuntimeError):
     pass
+
+
+class RuntimePolicyLevel(StrEnum):
+    RESTRICTED = "restricted"
+    STANDARD = "standard"
+    PRIVILEGED = "privileged"
 
 
 class RuntimeExecLimits(BaseModel):
@@ -26,6 +34,7 @@ class RuntimeExecRequest(BaseModel):
     cwd: str
     env: dict[str, str] = Field(default_factory=dict)
     limits: RuntimeExecLimits
+    policy_level: RuntimePolicyLevel = RuntimePolicyLevel.STANDARD
 
 
 class RuntimeExecResponse(BaseModel):
@@ -62,10 +71,11 @@ class RustRuntimeClient:
                 "max_stdout_bytes": request.limits.max_stdout_bytes,
                 "max_stderr_bytes": request.limits.max_stderr_bytes,
             },
+            "policy_level": request.policy_level.value,
         }
 
         runtime_env = os.environ.copy()
-        runtime_env["MONAD_RUNTIME_ALLOWED_PREFIXES"] = ",".join(self._allowed_command_prefixes)
+        runtime_env["ELYON_RUNTIME_ALLOWED_PREFIXES"] = ",".join(self._allowed_command_prefixes)
 
         start = perf_counter()
         try:

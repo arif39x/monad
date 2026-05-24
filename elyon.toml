@@ -1,24 +1,4 @@
-from __future__ import annotations
-
-from pathlib import Path
-
-
-def execute(output_path: Path, *, force: bool) -> dict[str, object]:
-    if output_path.exists() and not force:
-        raise FileExistsError(f"Refusing to overwrite existing config without --force: {output_path}")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(_template(), encoding="utf-8")
-
-    return {
-        "status": "ok",
-        "message": "Config initialized",
-        "path": str(output_path),
-    }
-
-
-def _template() -> str:
-    return """default_provider = "local_mock"
+default_provider = "local_mock"
 
 [providers.local_mock]
 name = "local_mock"
@@ -52,7 +32,7 @@ model = "local-model"
 description = "Verifies that repairs are correct"
 
 [runtime]
-command = ["runtime/target/release/elyon-runtime"]
+command = [".zero/bin/elyon-runtime"]
 request_timeout_seconds = 60.0
 max_stdout_bytes = 1048576
 max_stderr_bytes = 1048576
@@ -73,4 +53,10 @@ allowed_write_roots = ["."]
 
 [state]
 event_log_path = "./state/events.jsonl"
-"""
+
+[compiler]
+# Path to the zerolang compiler binary.
+# Omit (or set to empty) to auto-detect from:
+#   1. .zero/bin/zero (local build)
+#   2. $PATH (global install)
+# zerolang_path = ".zero/bin/zero"

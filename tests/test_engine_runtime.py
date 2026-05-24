@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from bindings import RuntimeExecRequest, RuntimeExecResponse, RuntimeExecutionError
-from orchestration.config import MonadSettings
-from orchestration.engine import MonadEngine
+from orchestration.config import ElyonSettings
+from orchestration.engine import ElyonEngine
 from orchestration.events import EventType, InMemoryEventStore
 from providers import ProviderRegistry
 from state import InMemorySessionStore
@@ -27,8 +27,8 @@ class FailingRuntimeClient:
         raise RuntimeExecutionError("runtime failed")
 
 
-def _settings() -> MonadSettings:
-    return MonadSettings.model_validate(
+def _settings() -> ElyonSettings:
+    return ElyonSettings.model_validate(
         {
             "default_provider": "mock",
             "providers": {
@@ -68,7 +68,7 @@ def _settings() -> MonadSettings:
 def test_execute_runtime_command_emits_success_events() -> None:
     async def scenario() -> None:
         events = InMemoryEventStore()
-        engine = MonadEngine(
+        engine = ElyonEngine(
             settings=_settings(),
             event_store=events,
             session_store=InMemorySessionStore(),
@@ -90,7 +90,7 @@ def test_execute_runtime_command_emits_success_events() -> None:
 def test_execute_runtime_command_emits_failure_event() -> None:
     async def scenario() -> None:
         events = InMemoryEventStore()
-        engine = MonadEngine(
+        engine = ElyonEngine(
             settings=_settings(),
             event_store=events,
             session_store=InMemorySessionStore(),

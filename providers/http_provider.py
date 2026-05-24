@@ -42,6 +42,8 @@ class HttpProvider(ProviderClient):
                         json=payload,
                         headers=headers,
                     )
+                    if response.status_code in (401, 403):
+                        response.raise_for_status()
                     response.raise_for_status()
                     latency_ms = int((perf_counter() - start) * 1000)
                     data = response.json()
@@ -52,15 +54,39 @@ class HttpProvider(ProviderClient):
                         usage_output_tokens=_extract_usage(data, "output_tokens"),
                         latency_ms=latency_ms,
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (
+                        401,
+                        403,
+                    ):
+                        raise ProviderExecutionError(f"Auth error: {exc}") from exc
                     last_error = exc
 
         raise ProviderExecutionError("Provider request failed after retries") from last_error
 
     async def stream_complete(self, request: ProviderRequest):
-        response = await self.complete(request)
-        for chunk in response.text.split():
-            yield f"{chunk} "
+        payload = {
+            "model": request.model,
+            "prompt": request.prompt,
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "trace_id": request.trace_id,
+            "stream": True,
+        }
+        headers: dict[str, str] = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        async with httpx.AsyncClient(timeout=request.timeout_seconds) as client:
+            try:
+                async with client.stream(
+                    "POST", self._settings.base_url, json=payload, headers=headers
+                ) as response:
+                    response.raise_for_status()
+                    async for chunk in response.aiter_text():
+                        yield chunk
+            except Exception as exc:
+                raise ProviderExecutionError("Streaming failed") from exc
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
@@ -76,9 +102,34 @@ def _extract_text(payload: dict[str, Any]) -> str:
     if isinstance(choices, list) and choices:
         first = choices[0]
         if isinstance(first, dict):
+            # Completion
             candidate = first.get("text")
             if isinstance(candidate, str):
                 return candidate
+            # Chat completion
+            message = first.get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content
+                # OpenAI Content arrays
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text_parts.append(part.get("text", ""))
+                    return "".join(text_parts)
+
+    # Anthropic
+    content = payload.get("content")
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+        return "".join(text_parts)
+    elif isinstance(content, str):
+        return content
 
     raise ProviderExecutionError("Provider response did not include a supported text field")
 

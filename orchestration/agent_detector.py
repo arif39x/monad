@@ -4,6 +4,8 @@ import asyncio
 import os
 import shutil
 from dataclasses import dataclass
+from orchestration.adapters.registry import get_adapter
+from orchestration.adapters.base import AbstractAgentAdapter
 
 AGENT_NAME_PATTERNS = [
     "opencode", "aider", "claude", "codex", "gemini", "gpt",
@@ -14,32 +16,6 @@ AGENT_NAME_PATTERNS = [
     "amazonq", "q-developer", "roo-code", "ampcode", "devin",
 ]
 
-KNOWN_SIGNATURES: dict[str, list[str]] = {
-    "opencode": ["{prompt}"],
-    "aider": ["--message", "{prompt}"],
-    "claude": ["-p", "{prompt}"],
-    "claude.exe": ["-p", "{prompt}"],
-    "codex": ["{prompt}"],
-    "gemini": ["ask", "{prompt}"],
-    "gpt": ["{prompt}"],
-    "copilot": ["{prompt}"],
-    "github-copilot-cli": ["{prompt}"],
-    "ollama": ["run", "{model}", "{prompt}"],
-    "cline": ["{prompt}"],
-    "goose": ["run", "{prompt}"],
-    "openhands": ["{prompt}"],
-    "opendevin": ["{prompt}"],
-    "openhands-cli": ["{prompt}"],
-    "warp": ["{prompt}"],
-    "q": ["chat", "{prompt}"],
-    "amazon-q": ["chat", "{prompt}"],
-    "roo": ["{prompt}"],
-    "roo-code": ["{prompt}"],
-    "continue": ["{prompt}"],
-    "ampcode": ["{prompt}"],
-    "devin": ["{prompt}"],
-}
-
 
 @dataclass(frozen=True)
 class DetectedAgent:
@@ -47,7 +23,7 @@ class DetectedAgent:
     binary: str
     path: str
     description: str
-    signature: tuple[str, ...] = ()
+    adapter: AbstractAgentAdapter
 
 
 _AGENT_DESCRIPTIONS: dict[str, str] = {
@@ -89,6 +65,8 @@ def _heuristic_name(binary: str) -> bool:
 
 def _heuristic_ai_keywords(binary_path: str) -> bool:
     try:
+        # Use a fresh event loop or just run it synchronously if possible, 
+        # but asyncio.run is generally fine here for a single call.
         result = asyncio.run(
             asyncio.create_subprocess_exec(
                 binary_path, "--help",
@@ -102,13 +80,6 @@ def _heuristic_ai_keywords(binary_path: str) -> bool:
         return any(kw in output for kw in ai_keywords)
     except Exception:
         return False
-
-
-def _resolve_signature(binary: str) -> tuple[str, ...]:
-    name = os.path.splitext(binary)[0].lower()
-    if name in KNOWN_SIGNATURES:
-        return tuple(KNOWN_SIGNATURES[name])
-    return ("{prompt}",)
 
 
 def _resolve_description(binary: str) -> str:
@@ -142,14 +113,13 @@ def detect_agents() -> list[DetectedAgent]:
                 if resolved is None:
                     continue
 
-                sig = _resolve_signature(entry)
                 desc = _resolve_description(entry)
                 found[entry] = DetectedAgent(
                     name=entry,
                     binary=entry,
                     path=resolved,
                     description=desc,
-                    signature=sig,
+                    adapter=get_adapter(entry),
                 )
         except PermissionError:
             continue
