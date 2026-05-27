@@ -18,6 +18,18 @@ class EventType(str, Enum):
     PATCH_APPLIED = "patch_applied"
     SUBPROCESS_SPAWNED = "subprocess_spawned"
     RUN_FAILED = "run_failed"
+    INTENT_CLASSIFIED = "intent_classified"
+    INTENT_ROUTED_LOCAL = "intent_routed_local"
+    KNOWLEDGE_RETRIEVED = "knowledge_retrieved"
+    SECURITY_EVENT = "security_event"
+    SANDBOX_DENIED = "sandbox_denied"
+    SANDBOX_ALLOWED = "sandbox_allowed"
+    KEY_ACCESSED = "key_accessed"
+    PRIVILEGE_ESCALATION = "privilege_escalation"
+    AGENT_SELECTED = "agent_selected"
+    AGENT_FALLBACK = "agent_fallback"
+    AGENT_UNAVAILABLE = "agent_unavailable"
+    MEMORY_SUMMARIZED = "memory_summarized"
 
 
 class EventMetadata(BaseModel):

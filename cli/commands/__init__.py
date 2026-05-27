@@ -1,5 +1,5 @@
 from cli.commands.agents_cmd import execute as agents_execute
-from cli.commands.compile_cmd import execute_runtime_compile, execute_zero_compile, parse_diagnostics_file
+from cli.commands.compile_cmd import execute_runtime_compile, parse_diagnostics_file
 from cli.commands.doctor_cmd import execute as doctor_execute
 from cli.commands.init_cmd import execute as init_execute
 from cli.commands.project_cmd import execute as project_execute
@@ -14,7 +14,6 @@ __all__ = [
     "agents_execute",
     "doctor_execute",
     "execute_runtime_compile",
-    "execute_zero_compile",
     "init_execute",
     "parse_diagnostics_file",
     "project_execute",

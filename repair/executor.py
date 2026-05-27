@@ -10,7 +10,6 @@ from repair.applier import apply_edit
 async def execute_repair_plan(
     plan: RepairPlan,
     working_dir: Path,
-    zerolang_path: str | None = None,
     apply: bool = False
 ) -> list[dict[str, Any]]:
     results = []
@@ -23,7 +22,7 @@ async def execute_repair_plan(
                 snippet = getattr(directive, "snippet", f"# Patched for {directive.reason}")
                 if await apply_edit(directive.target_file, snippet, working_dir):
                     content = target.read_text(encoding="utf-8")
-                    passed, msg = await verify_proposed_change(content, zerolang_path)
+                    passed, msg = await verify_proposed_change(content)
                     if passed:
                         results.append({"action": "edit", "status": "success", "file": directive.target_file})
                     else:
@@ -33,7 +32,7 @@ async def execute_repair_plan(
             else:
                 if target.exists():
                     content = target.read_text(encoding="utf-8")
-                    passed, msg = await verify_proposed_change(content, zerolang_path)
+                    passed, msg = await verify_proposed_change(content)
                     if passed:
                         results.append({"action": "edit", "status": "success", "file": directive.target_file, "dry_run": True})
                     else:

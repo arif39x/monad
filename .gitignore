@@ -11,8 +11,7 @@ env/
 .pytest_cache/
 .mypy_cache/
 runtime/target/
-.zero/
-.zerotmp/
+.bin/
 diagnostics/
 state/
 *.log
@@ -24,3 +23,4 @@ Thumbs.db
 *.swp
 *.swo
 *~
+/Book/

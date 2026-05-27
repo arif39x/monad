@@ -23,6 +23,7 @@ class ProviderSettings(BaseModel):
     timeout_seconds: float = Field(gt=0)
     max_retries: int = Field(ge=0)
     api_key_env: str | None = None
+    adapter: str = "generic"
 
     @field_validator("base_url", "api_key_env", mode="before")
     @classmethod
@@ -59,10 +60,113 @@ class SandboxSettings(BaseModel):
 
 class StateSettings(BaseModel):
     event_log_path: str
+    backend: str = "jsonl"
+    retention: RetentionSettings | None = None
 
 
-class CompilerSettings(BaseModel):
-    zerolang_path: str | None = Field(default=None)
+class RetentionSettings(BaseModel):
+    active_max_rows: int = 10000
+    active_max_mb: int = 100
+    archive_ttl_days: int = 90
+    archive_compression: str = "gzip"
+    prune_interval_minutes: int = 60
+
+
+class MinificationSettings(BaseModel):
+    enabled: bool = False
+    target_tokens: int = 4096
+    hard_limit: int = 8192
+    preserve_user_message: bool = True
+    structural_only: bool = False
+
+
+class CacheSettings(BaseModel):
+    prefix_cache_enabled: bool = False
+    prefix_cache_ttl_seconds: int = 300
+    prefix_cache_max_entries: int = 500
+    prefix_cache_backend: str = "memory"
+    provider_cache_enabled: bool = False
+
+
+class RoutingSettings(BaseModel):
+    intent_router_enabled: bool = False
+    classifier_backend: str = "pattern"
+    confidence_threshold: float = 0.7
+    enable_shell_commands: bool = True
+    enable_file_operations: bool = True
+    allowed_shell_commands: list[str] = Field(default_factory=lambda: ["ls", "cat", "head", "tail", "wc", "find", "grep", "git"])
+    max_command_length: int = 200
+
+
+class DiffSettings(BaseModel):
+    enabled: bool = False
+    max_snapshots: int = 100
+
+
+class KnowledgeSettings(BaseModel):
+    vector_enabled: bool = False
+    embedding_backend: str = "simple"
+    chunk_strategy: str = "auto"
+    chunk_max_tokens: int = 200
+    chunk_overlap_tokens: int = 50
+    search_top_k: int = 15
+    min_score: float = 0.0
+
+
+class SessionMemorySettings(BaseModel):
+    enabled: bool = False
+    working_memory_turns: int = 5
+    working_memory_max_tokens: int = 4096
+    summarized_memory_max_depth: int = 10
+    summarization_mode: str = "extractive"
+    abstractive_provider: str = "cheapest"
+    auto_summarize_threshold_tokens: int = 3072
+    cross_session_memory: bool = False
+
+
+class AgentRoutingSettings(BaseModel):
+    strategy: str = "legacy"
+    fallback_enabled: bool = True
+    max_fallback_depth: int = 3
+    history_ttl_days: int = 30
+    scoring_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "capability": 0.30,
+            "cost": 0.25,
+            "load": 0.20,
+            "reliability": 0.15,
+            "latency": 0.10,
+        }
+    )
+
+
+class SecuritySandboxSettings(BaseModel):
+    enable_argument_filtering: bool = False
+    dangerous_arg_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"rm\s+-rf\s+/",
+            r"sudo\s+",
+            r">\s*/etc/",
+            r"\|\s*(curl|wget|nc|bash|sh)",
+            r"`.*`",
+            r"\$\(.*\)",
+        ]
+    )
+    enable_network_egress_control: bool = False
+    allowed_egress_hosts: list[str] = Field(
+        default_factory=lambda: ["api.openai.com", "api.anthropic.com"]
+    )
+    max_commands_per_minute: int = 30
+    enable_composition_check: bool = False
+    deny_privileged_escalation: bool = False
+
+
+class SecuritySettings(BaseModel):
+    audit_log_path: str = ".elyon/security.log"
+    audit_log_retention_days: int = 90
+    encrypt_api_keys: bool = False
+    key_encryption_key_env: str = "ELYON_ENCRYPTION_KEY"
+    sandbox: SecuritySandboxSettings = Field(default_factory=SecuritySandboxSettings)
 
 
 class ElyonSettings(BaseModel):
@@ -74,7 +178,14 @@ class ElyonSettings(BaseModel):
     telemetry: TelemetrySettings
     sandbox: SandboxSettings
     state: StateSettings
-    compiler: CompilerSettings = Field(default_factory=CompilerSettings)
+    minification: MinificationSettings = Field(default_factory=MinificationSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
+    routing: RoutingSettings = Field(default_factory=RoutingSettings)
+    diff: DiffSettings = Field(default_factory=DiffSettings)
+    knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
+    session_memory: SessionMemorySettings = Field(default_factory=SessionMemorySettings)
+    agent_routing: AgentRoutingSettings = Field(default_factory=AgentRoutingSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
 
     def provider(self, name: str | None = None) -> ProviderSettings:
         selected_name = name or self.default_provider

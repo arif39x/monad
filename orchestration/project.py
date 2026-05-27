@@ -76,45 +76,64 @@ async def run_task(
     sandbox_policy: SandboxPolicy,
     *,
     dry_run: bool = False,
-    zerolang_path: str | None = None,
+    router: object | None = None,
 ) -> TaskResult:
     from orchestration.agents import Agent, AgentRegistry, AgentRole, AgentSettings
+    from orchestration.routing import (
+        AgentRouter,
+        RoutingContext,
+        RoutingStrategy,
+    )
 
     full_prompt = task.prompt
     if task.context:
         full_prompt = f"{task.context}\n\n{task.prompt}"
 
     registry = AgentRegistry._instance or AgentRegistry()
-    agent_obj = registry.get_agent(task.agent)
+
+    agent_obj: Agent | None = None
+    if router is not None and isinstance(router, AgentRouter):
+        routing_strategy = RoutingStrategy.LEGACY
+        try:
+            agent_list = registry.list_agents()
+            agents_with_status = router.build_agent_status(agent_list)
+            ctx = RoutingContext(
+                task=task,
+                available_agents=agents_with_status,
+                history=router.history.get_stats(),
+            )
+            decision = await router.select(ctx, strategy=routing_strategy)
+            agent_obj = decision.primary.agent
+        except Exception:
+            agent_obj = registry.get_agent(task.agent)
+    else:
+        agent_obj = registry.get_agent(task.agent)
+
     if not agent_obj:
-        # On-the-fly registration for detected agents
         agent_obj = Agent(
-            AgentSettings(name=task.agent, role=AgentRole.PLANNER, provider="default"),
-            zerolang_path=zerolang_path,
+            AgentSettings(name=task.agent, role=AgentRole.PLANNER, provider="default")
         )
         registry.register(agent_obj)
 
-    # Initialize Knowledge Store
     knowledge_index = working_dir / ".elyon" / "knowledge.json"
     knowledge_store = KnowledgeStore(knowledge_index)
 
-    # Zero-Context Integration
     if task.files:
         file_paths = [working_dir / f for f in task.files if (working_dir / f).exists()]
         if file_paths:
-            ast_context = await agent_obj.prepare_context(
+            context_data = await agent_obj.prepare_context(
                 file_paths, knowledge_store=knowledge_store
             )
-            full_prompt = f"{full_prompt}\n\nCode Context (AST):\n{ast_context}"
+            full_prompt = f"{full_prompt}\n\nCode Context:\n{context_data}"
         else:
             file_refs = ", ".join(task.files)
             full_prompt = f"{full_prompt}\n\nRelevant files (not found): {file_refs}"
 
     # RAG
-    relevant_knowledge = knowledge_store.search(task.prompt, limit=3)
+    relevant_knowledge = await knowledge_store.search(task.prompt, limit=3)
     if relevant_knowledge:
         knowledge_block = "\n".join(
-            f"- {k.symbol} ({k.path}): {k.content}" for k in relevant_knowledge
+            f"- {k.entry.symbol} ({k.entry.path}): {k.entry.content}" for k in relevant_knowledge
         )
         full_prompt = (
             f"{full_prompt}\n\nRetrieved Knowledge (Docstrings/Comments):\n{knowledge_block}"
@@ -251,7 +270,7 @@ async def execute_plan(
     sandbox_policy: SandboxPolicy,
     *,
     dry_run: bool = False,
-    zerolang_path: str | None = None,
+    router: object | None = None,
 ) -> ProjectPlan:
     layers = _group_by_depth(plan.tasks)
     completed: dict[str, TaskResult] = {}
@@ -276,7 +295,7 @@ async def execute_plan(
                 runtime_client,
                 sandbox_policy,
                 dry_run=dry_run,
-                zerolang_path=zerolang_path,
+                router=router,
             )
 
         results = await asyncio.gather(*[run_layer_task(t) for t in layer])

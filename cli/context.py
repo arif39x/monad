@@ -5,7 +5,7 @@ from pathlib import Path
 
 from bindings import RuntimeClient, RustRuntimeClient
 from orchestration import ElyonEngine, ElyonSettings, load_settings
-from orchestration.events import JsonlEventStore
+from orchestration.events import JsonlEventStore, SqliteEventStore
 from orchestration.logging import configure_logging
 from providers import MockProvider, ProviderRegistry, build_registry
 from state import InMemorySessionStore
@@ -25,7 +25,10 @@ def build_context(config_path: Path) -> CliContext:
     settings = load_settings(config_path)
     configure_logging(settings.telemetry)
 
-    event_store = JsonlEventStore(path=Path(settings.state.event_log_path))
+    if settings.state.backend == "sqlite":
+        event_store = SqliteEventStore(db_path=Path(settings.state.event_log_path).with_suffix(".db"))
+    else:
+        event_store = JsonlEventStore(path=Path(settings.state.event_log_path))
     providers = build_registry(settings)
 
     for provider_name, provider_settings in settings.providers.items():

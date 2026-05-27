@@ -10,9 +10,11 @@ from compiler import parse_structured_diagnostics
 from orchestration.config import ElyonSettings
 from orchestration.events import ElyonEvent, EventStore, EventType
 from orchestration.logging import get_logger
-from providers import ProviderRegistry, ProviderRequest
+from providers.base import ProviderRequest
+from providers.registry import ProviderRegistry
 from repair import RepairPlan, build_repair_plan
-from state import InMemorySessionStore, SessionState
+from sandbox import SecurityAuditLogger
+from state import ConversationTurn, InMemorySessionStore, SessionMemoryManager, SessionState
 
 
 class ElyonEngine:
@@ -31,6 +33,72 @@ class ElyonEngine:
         self._provider_registry = provider_registry
         self._runtime_client = runtime_client
         self._logger = get_logger("elyon.engine")
+        self._minifier: object | None = None
+        self._prefix_cache: object | None = None
+        self._intent_router: object | None = None
+        self._diff_engine: object | None = None
+        self._session_memory: SessionMemoryManager | None = None
+        self._audit_logger: SecurityAuditLogger | None = None
+
+    def _get_minifier(self):
+        if self._minifier is None:
+            from orchestration.minify import PromptMinifier
+            self._minifier = PromptMinifier(
+                enabled=self._settings.minification.enabled,
+                target_tokens=self._settings.minification.target_tokens,
+                hard_limit=self._settings.minification.hard_limit,
+                preserve_user_message=self._settings.minification.preserve_user_message,
+                structural_only=self._settings.minification.structural_only,
+            )
+        return self._minifier
+
+    def _get_prefix_cache(self):
+        if self._prefix_cache is None:
+            from orchestration.cache import PrefixCacheManager
+            self._prefix_cache = PrefixCacheManager(
+                enabled=self._settings.cache.prefix_cache_enabled,
+                ttl_seconds=self._settings.cache.prefix_cache_ttl_seconds,
+                max_entries=self._settings.cache.prefix_cache_max_entries,
+            )
+        return self._prefix_cache
+
+    def _get_intent_router(self):
+        if self._intent_router is None:
+            from orchestration.routing import IntentRouter
+            self._intent_router = IntentRouter(
+                enabled=self._settings.routing.intent_router_enabled,
+                confidence_threshold=self._settings.routing.confidence_threshold,
+                enable_shell_commands=self._settings.routing.enable_shell_commands,
+                enable_file_operations=self._settings.routing.enable_file_operations,
+            )
+        return self._intent_router
+
+    def _get_diff_engine(self):
+        if self._diff_engine is None:
+            from orchestration.diff import ContextDiffEngine
+            self._diff_engine = ContextDiffEngine(
+                enabled=self._settings.diff.enabled,
+                max_snapshots=self._settings.diff.max_snapshots,
+            )
+        return self._diff_engine
+
+    def _get_session_memory(self) -> SessionMemoryManager:
+        if self._session_memory is None:
+            self._session_memory = SessionMemoryManager(
+                working_memory_turns=self._settings.session_memory.working_memory_turns,
+                working_memory_max_tokens=self._settings.session_memory.working_memory_max_tokens,
+                summarized_memory_max_depth=self._settings.session_memory.summarized_memory_max_depth,
+                auto_summarize_threshold_tokens=self._settings.session_memory.auto_summarize_threshold_tokens,
+            )
+        return self._session_memory
+
+    def _get_audit_logger(self) -> SecurityAuditLogger:
+        if self._audit_logger is None:
+            self._audit_logger = SecurityAuditLogger(
+                log_path=self._settings.security.audit_log_path,
+                retention_days=self._settings.security.audit_log_retention_days,
+            )
+        return self._audit_logger
 
     async def run_prompt(
         self,
@@ -45,6 +113,16 @@ class ElyonEngine:
         session = await self._resolve_session(session_id)
         provider_settings = self._settings.provider(provider_name)
 
+        memory = self._get_session_memory() if self._settings.session_memory.enabled else None
+        if memory and session.attributes.get("memory"):
+            try:
+                restored = SessionMemoryManager.deserialize(session.attributes["memory"])
+                memory._working = restored._working
+                memory._summarized = restored._summarized
+                memory._token_budget = restored._token_budget
+            except Exception:
+                pass
+
         await self._emit(
             EventType.PROMPT_ISSUED,
             payload={"session_id": session.session_id, "prompt_chars": len(prompt)},
@@ -52,13 +130,91 @@ class ElyonEngine:
             actor="planner",
         )
 
+        intent_router = self._get_intent_router()
+        intent_result = intent_router.classify(prompt)
+
+        await self._emit(
+            EventType.INTENT_CLASSIFIED,
+            payload={
+                "intent": intent_result.intent,
+                "confidence": intent_result.confidence,
+                "prompt": prompt[:200],
+            },
+            trace_id=active_trace_id,
+            actor="planner",
+        )
+
+        if intent_result.intent in ("shell_command", "file_operation") and intent_result.confidence >= 0.85:
+            await self._emit(
+                EventType.INTENT_ROUTED_LOCAL,
+                payload={
+                    "intent": intent_result.intent,
+                    "command": intent_result.command or "",
+                    "file_path": intent_result.file_path or "",
+                },
+                trace_id=active_trace_id,
+                actor="planner",
+            )
+            if intent_result.intent == "shell_command" and intent_result.command:
+                cmd = intent_result.command
+                rest = prompt.strip()[len(cmd.split()[0]):].strip()
+                full_cmd = [cmd] + (rest.split() if rest else [])
+                exec_response = await self.execute_runtime_command(
+                    command=full_cmd,
+                    cwd=".",
+                    trace_id=active_trace_id,
+                )
+                text = exec_response.stdout
+                if memory:
+                    turn = ConversationTurn(prompt=prompt, response=text)
+                    memory.append_turn(turn)
+                    session = session.model_copy(update={
+                        "event_ids": session.event_ids + (active_trace_id,),
+                        "attributes": {**(session.attributes or {}), "memory": memory.serialize()},
+                    })
+                    await self._session_store.upsert(session)
+                return text
+            return f"[local: {intent_result.intent}]"
+
+        minifier = self._get_minifier()
+        minified_prompt, minification_report = minifier.minify(prompt)
+
+        prefix_cache = None
+        cached_prefix_hash = ""
+        cache_ttl_seconds = 0
+        cacheable_prefix_tokens = 0
+        if self._settings.cache.prefix_cache_enabled:
+            prefix_cache = self._get_prefix_cache()
+            cacheable_prefix = prefix_cache.extract_prefix(minified_prompt)
+            entry = await prefix_cache.lookup(session.session_id, cacheable_prefix)
+            if entry is not None:
+                cached_prefix_hash = entry.prefix_hash
+                cache_ttl_seconds = int(entry.ttl_seconds)
+                cacheable_prefix_tokens = minification_report.final_tokens
+            else:
+                await prefix_cache.store(session.session_id, cacheable_prefix)
+
+        memory_context = memory.build_context() if memory else ""
+        import hashlib
+        session_memory_hash = hashlib.sha256(memory_context.encode()).hexdigest()[:16] if memory_context else ""
+
         request = ProviderRequest(
-            prompt=prompt,
+            prompt=minified_prompt,
             model=provider_settings.model,
             temperature=provider_settings.default_temperature,
             max_tokens=provider_settings.default_max_tokens,
             timeout_seconds=provider_settings.timeout_seconds,
             trace_id=active_trace_id,
+            pre_minified_tokens=minification_report.original_tokens,
+            post_minified_tokens=minification_report.final_tokens,
+            minification_ratio=minification_report.ratio,
+            cached_prefix_hash=cached_prefix_hash,
+            cache_ttl_seconds=cache_ttl_seconds,
+            cacheable_prefix_tokens=cacheable_prefix_tokens,
+            intent=intent_result.intent,
+            intent_confidence=intent_result.confidence,
+            session_memory_hash=session_memory_hash,
+            session_memory_context=memory_context,
         )
 
         provider = await self._provider_registry.get(provider_settings.name)
@@ -98,6 +254,33 @@ class ElyonEngine:
                 provider=provider_settings.name,
                 output_chars=len(text),
             )
+
+            if memory:
+                turn = ConversationTurn(
+                    prompt=prompt,
+                    response=text,
+                    token_count=minification_report.final_tokens + len(text) // 4,
+                )
+                memory.append_turn(turn)
+                if memory.needs_summarization():
+                    from state.summarizer import ExtractiveSummarizer
+                    summarizer = ExtractiveSummarizer()
+                    oldest = memory.working_memory.pop_oldest(2)
+                    if oldest:
+                        summary = summarizer.summarize(oldest)
+                        memory.push_summary(summary)
+                        await self._emit(
+                            EventType.MEMORY_SUMMARIZED,
+                            payload={"summary": summary.content[:200], "turn_count": summary.turn_count},
+                            trace_id=active_trace_id,
+                            actor="planner",
+                        )
+                session = session.model_copy(update={
+                    "event_ids": session.event_ids + (active_trace_id,),
+                    "attributes": {**(session.attributes or {}), "memory": memory.serialize()},
+                })
+                await self._session_store.upsert(session)
+
             return text
         except Exception as exc:
             await self._emit(

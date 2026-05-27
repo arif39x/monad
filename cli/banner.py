@@ -20,7 +20,6 @@ project files — no single-agent lock-in.\033[0m
 \033[37m  \033[32m•\033[0m \033[37mAgent-agnostic — works with ANY CLI AI agent you have installed
   \033[32m•\033[0m \033[37mParallel execution — independent tasks run concurrently
   \033[32m•\033[0m \033[37mSandboxed — every subprocess passes through policy enforcement
-  \033[32m•\033[0m \033[37mToken-optimized — built-in Zero compiler reduces LLM costs
   \033[32m•\033[0m \033[37mDynamic discovery — finds new agents automatically, no config needed\033[0m
 
 \033[1;33mWhy Elyon is different\033[0m
@@ -31,7 +30,6 @@ project files — no single-agent lock-in.\033[0m
 \033[1;33mBenefits\033[0m
 \033[37m  \033[32m•\033[0m \033[37mNo vendor lock-in — swap agents per task without changing workflows
   \033[32m•\033[0m \033[37mSecurity-first — sandbox policy controls what each agent can do
-  \033[32m•\033[0m \033[37mCost control — Zero compiler strips filler, you pay for what matters
   \033[32m•\033[0m \033[37mReproducible — JSONL project files version your entire pipeline\033[0m
 """
 
@@ -43,7 +41,7 @@ HELP_TEXT = """
   \033[32mconfig\033[0m   \033[37mShow project configuration and template files
   \033[32mproject\033[0m  \033[37mRun a multi-agent project from a JSONL file
   \033[32mrun\033[0m      \033[37mSend a prompt to an LLM provider
-  \033[32mcompile\033[0m  \033[37mCompile a .zero file with token optimization
+  \033[32mcompile\033[0m  \033[37mCheck compilation diagnostics
   \033[32mproviders\033[0m \033[37mList configured LLM providers
   \033[32mdoctor\033[0m   \033[37mCheck system health and configuration
   \033[32m sandbox\033[0m  \033[37mValidate sandbox policy rules

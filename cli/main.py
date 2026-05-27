@@ -12,7 +12,6 @@ from cli.commands import (
     agents_execute,
     doctor_execute,
     execute_runtime_compile,
-    execute_zero_compile,
     init_execute,
     parse_diagnostics_file,
     project_execute,
@@ -82,7 +81,6 @@ def _build_parser() -> argparse.ArgumentParser:
     compile_parser.add_argument("--config")
     compile_parser.add_argument("--diagnostics")
     compile_parser.add_argument("--exec-command")
-    compile_parser.add_argument("--zero", type=str, help="Compile a .zero file and estimate token savings")
     compile_parser.add_argument("--cwd", default=".")
     compile_parser.add_argument("--timeout-seconds", type=float)
 
@@ -106,9 +104,6 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.command == "compile" and args.diagnostics:
         return parse_diagnostics_file(Path(args.diagnostics))
-
-    if args.command == "compile" and args.zero:
-        return execute_zero_compile(Path(args.zero))
 
     if args.command == "agents":
         config_path = getattr(args, "config", None) or os.getenv("ELYON_CONFIG")

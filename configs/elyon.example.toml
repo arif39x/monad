@@ -21,7 +21,7 @@ max_retries = 2
 api_key_env = "ELYON_PROVIDER_API_KEY"
 
 [runtime]
-command = [".zero/bin/elyon-runtime"]
+command = [".bin/elyon-runtime"]
 request_timeout_seconds = 60.0
 max_stdout_bytes = 1048576
 max_stderr_bytes = 1048576
@@ -29,7 +29,7 @@ max_stderr_bytes = 1048576
 [repair]
 max_attempts = 3
 verify_after_repair = true
-allowed_extensions = [".py", ".rs", ".zero", ".toml"]
+allowed_extensions = [".py", ".rs", ".toml"]
 
 [telemetry]
 log_level = "INFO"
@@ -42,10 +42,3 @@ allowed_write_roots = ["."]
 
 [state]
 event_log_path = "./state/events.jsonl"
-
-[compiler]
-# Path to the zerolang compiler binary.
-# Omit (or set to empty) to auto-detect from:
-#   1. .zero/bin/zero (local build)
-#   2. $PATH (global install)
-# zerolang_path = ".zero/bin/zero"

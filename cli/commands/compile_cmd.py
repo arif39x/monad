@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from cli.context import CliContext
 from compiler import parse_structured_diagnostics
-from compiler.zero_compiler import compile_zero
 
 
 def parse_diagnostics_file(diagnostics_path: Path) -> dict[str, object]:
@@ -16,10 +15,6 @@ def parse_diagnostics_file(diagnostics_path: Path) -> dict[str, object]:
         "diagnostic_count": len(diagnostics),
         "diagnostics": [diagnostic.model_dump(mode="json") for diagnostic in diagnostics],
     }
-
-
-def execute_zero_compile(zero_path: Path) -> dict[str, object]:
-    return compile_zero(zero_path)
 
 
 async def execute_runtime_compile(

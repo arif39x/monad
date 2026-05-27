@@ -70,7 +70,7 @@ max_stderr_bytes = 1048576
 [repair]
 max_attempts = 3
 verify_after_repair = true
-allowed_extensions = [".py", ".rs", ".zero", ".toml"]
+allowed_extensions = [".py", ".rs", ".toml"]
 
 [telemetry]
 log_level = "INFO"

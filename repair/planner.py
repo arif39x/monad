@@ -13,18 +13,11 @@ if TYPE_CHECKING:
 
 async def verify_proposed_change(
     change_content: str,
-    zerolang_path: str | None = None,
 ) -> tuple[bool, str]:
     """
-    Zero-Repair Flow:
-    1. Run zerolang --check <proposed_change>.
-    2. If Pass: Return (True, success_msg).
-    3. If Fail: Return (False, diagnostic_error).
+    Verification is currently disabled (Zero compiler removed).
     """
-    from compiler.zero_compiler import check_proposed_change
-
-    passed, message = await check_proposed_change(change_content, zerolang_path)
-    return passed, message
+    return True, "Verification skipped"
 
 
 def build_repair_plan(

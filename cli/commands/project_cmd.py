@@ -31,7 +31,6 @@ async def execute(
         runtime_client=context.runtime_client,
         sandbox_policy=sandbox_policy,
         dry_run=dry_run,
-        zerolang_path=context.settings.compiler.zerolang_path,
     )
 
     task_results = []

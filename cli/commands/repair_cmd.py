@@ -23,7 +23,7 @@ async def execute(
 
     from repair.executor import execute_repair_plan
     
-    execution_results = await execute_repair_plan(plan, Path("."), context.settings.compiler.zerolang_path, apply=apply)
+    execution_results = await execute_repair_plan(plan, Path("."), apply=apply)
 
     return {
         "status": "ok",

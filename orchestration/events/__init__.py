@@ -1,5 +1,6 @@
 from orchestration.events.models import EventMetadata, EventType, ElyonEvent
 from orchestration.events.store import EventStore, InMemoryEventStore, JsonlEventStore
+from orchestration.events.sqlite_store import SqliteEventStore
 
 __all__ = [
     "EventMetadata",
@@ -7,5 +8,6 @@ __all__ = [
     "EventType",
     "InMemoryEventStore",
     "JsonlEventStore",
+    "SqliteEventStore",
     "ElyonEvent",
 ]

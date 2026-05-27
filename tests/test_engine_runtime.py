@@ -16,7 +16,7 @@ class SuccessRuntimeClient:
     async def execute(self, request: RuntimeExecRequest) -> RuntimeExecResponse:
         return RuntimeExecResponse(
             exit_code=0,
-            stdout='{"code":"E1","message":"ok","severity":"note","span":{"path":"a.zero","line":1,"column":1}}',
+            stdout='{"code":"E1","message":"ok","severity":"note","span":{"path":"main.py","line":1,"column":1}}',
             stderr="",
             duration_ms=5,
         )
